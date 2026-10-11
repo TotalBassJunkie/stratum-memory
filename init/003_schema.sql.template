@@ -1,0 +1,212 @@
+-- Stratum-Memory: canonical schema (WP-02). Owner = current user (superuser/owner role).
+-- Embedding column type is parameterized via the docker-entrypoint-initdb.d wrapper
+-- (003_schema.sh), driven by the environment variable STRATUM_VECTOR_TYPE. The wrapper
+-- substitutes the two placeholders below with the deployment profile's type names:
+--   __VEC__      the embedding column type (fp16 half on the Pi, fp32 on the Server)
+--   __VEC_OPS__  the matching cosine distance operator class
+-- This .template file is intentionally NOT a .sql file so Postgres' init does not
+-- execute it directly; 003_schema.sh renders and pipes it through psql.
+
+CREATE TABLE IF NOT EXISTS tenants (
+    tenant_id   text PRIMARY KEY,
+    name        text NOT NULL,
+    created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    key_id       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id    text NOT NULL REFERENCES tenants(tenant_id),
+    key_prefix   text NOT NULL,
+    key_hash     text NOT NULL,             -- Argon2id
+    scopes       text[] NOT NULL DEFAULT '{read}',
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    revoked_at   timestamptz
+);
+CREATE INDEX IF NOT EXISTS api_keys_prefix_idx ON api_keys (key_prefix);
+
+CREATE TABLE IF NOT EXISTS entities (
+    entity_id     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id     text NOT NULL REFERENCES tenants(tenant_id),
+    name          text NOT NULL,
+    canonical_uri text NOT NULL,
+    type          text NOT NULL DEFAULT 'unknown',
+    aliases       text[] NOT NULL DEFAULT '{}',
+    embedding     __VEC__(1024),
+    tx_from       timestamptz NOT NULL DEFAULT now(),
+    tx_to         timestamptz,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, canonical_uri)
+);
+
+CREATE TABLE IF NOT EXISTS facts (
+    fact_id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id          text NOT NULL REFERENCES tenants(tenant_id),
+    subject_entity_id  uuid NOT NULL REFERENCES entities(entity_id),
+    predicate          text NOT NULL,
+    object_text        text,
+    object_entity_id   uuid REFERENCES entities(entity_id),
+    valid_from         timestamptz NOT NULL DEFAULT now(),
+    valid_to           timestamptz,
+    tx_from            timestamptz NOT NULL DEFAULT now(),
+    tx_to              timestamptz,
+    confidence         real NOT NULL DEFAULT 1.0,
+    source_uri         text,
+    source_span        jsonb,
+    superseded_by      uuid,  -- FK added below as DEFERRABLE so close-before-insert can set it
+    embedding          __VEC__(1024),
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    CHECK (valid_to IS NULL OR valid_from <= valid_to),
+    CHECK (tx_to IS NULL OR tx_from <= tx_to),
+    CHECK (confidence >= 0.0 AND confidence <= 1.0),
+    CHECK (object_text IS NOT NULL OR object_entity_id IS NOT NULL)
+);
+
+-- At most one open fact per (tenant, subject, predicate) at write time.
+CREATE UNIQUE INDEX IF NOT EXISTS facts_one_open_per_pred_idx
+    ON facts (tenant_id, subject_entity_id, predicate)
+    WHERE valid_to IS NULL AND tx_to IS NULL;
+
+-- superseded_by -> facts(fact_id) as a DEFERRABLE FK. FK constraints (unlike the partial
+-- unique index above) CAN be deferred, so correct_fact may set superseded_by in the closing
+-- UPDATE before the new row exists (all inside one transaction).
+ALTER TABLE facts DROP CONSTRAINT IF EXISTS facts_superseded_by_fkey;
+ALTER TABLE facts ADD CONSTRAINT facts_superseded_by_fkey
+    FOREIGN KEY (superseded_by) REFERENCES facts(fact_id)
+    DEFERRABLE INITIALLY DEFERRED;
+
+CREATE INDEX IF NOT EXISTS facts_temporal_idx ON facts (tenant_id, valid_from, valid_to);
+CREATE INDEX IF NOT EXISTS facts_tx_idx ON facts (tenant_id, tx_from, tx_to);
+CREATE INDEX IF NOT EXISTS facts_subject_idx ON facts (tenant_id, subject_entity_id);
+
+-- Approximate vector index (HNSW). cosine ops on __VEC__.
+CREATE INDEX IF NOT EXISTS facts_embedding_idx
+    ON facts USING hnsw (embedding __VEC_OPS__);
+
+CREATE TABLE IF NOT EXISTS edges (
+    edge_id       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id     text NOT NULL REFERENCES tenants(tenant_id),
+    src_entity_id uuid NOT NULL REFERENCES entities(entity_id),
+    dst_entity_id uuid NOT NULL REFERENCES entities(entity_id),
+    rel_type      text NOT NULL,
+    valid_from    timestamptz NOT NULL DEFAULT now(),
+    valid_to      timestamptz,
+    tx_from       timestamptz NOT NULL DEFAULT now(),
+    tx_to         timestamptz,
+    fact_id       uuid REFERENCES facts(fact_id),
+    CHECK (valid_to IS NULL OR valid_from <= valid_to),
+    CHECK (tx_to IS NULL OR tx_from <= tx_to)
+);
+CREATE INDEX IF NOT EXISTS edges_src_idx ON edges (tenant_id, src_entity_id);
+CREATE INDEX IF NOT EXISTS edges_dst_idx ON edges (tenant_id, dst_entity_id);
+
+CREATE TABLE IF NOT EXISTS files (
+    file_id      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id    text NOT NULL REFERENCES tenants(tenant_id),
+    uri          text NOT NULL,
+    path         text NOT NULL,
+    content_hash text NOT NULL,
+    l0           text,
+    l1           text,
+    size_bytes   bigint NOT NULL DEFAULT 0,
+    git_commit   text,
+    embedding    __VEC__(1024),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, uri)
+);
+CREATE INDEX IF NOT EXISTS files_embedding_idx ON files USING hnsw (embedding __VEC_OPS__);
+
+CREATE TABLE IF NOT EXISTS chunks (
+    chunk_id     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id    text NOT NULL REFERENCES tenants(tenant_id),
+    source_uri   text NOT NULL,
+    ordinal      integer NOT NULL,
+    text         text NOT NULL,
+    content_hash text NOT NULL,
+    embedding    __VEC__(1024),
+    UNIQUE (tenant_id, source_uri, ordinal)
+);
+CREATE INDEX IF NOT EXISTS chunks_hash_idx ON chunks (tenant_id, content_hash);
+CREATE INDEX IF NOT EXISTS chunks_embedding_idx ON chunks USING hnsw (embedding __VEC_OPS__);
+
+CREATE TABLE IF NOT EXISTS kv (
+    tenant_id  text NOT NULL REFERENCES tenants(tenant_id),
+    key        text NOT NULL,
+    value      jsonb NOT NULL,
+    expires_at timestamptz,
+    PRIMARY KEY (tenant_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS staging_candidates (
+    candidate_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id    text NOT NULL REFERENCES tenants(tenant_id),
+    kind         text NOT NULL,          -- fact|doc|entity|synthesis|skill
+    payload      jsonb NOT NULL,
+    source_uri   text,
+    confidence   real NOT NULL DEFAULT 1.0,
+    status       text NOT NULL DEFAULT 'pending',  -- pending|approved|rejected
+    reason       text,
+    ingest_id    text,
+    created_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS staging_status_idx ON staging_candidates (tenant_id, status);
+
+CREATE TABLE IF NOT EXISTS memory_events (
+    event_id   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id  text NOT NULL REFERENCES tenants(tenant_id),
+    op         text NOT NULL,            -- ADD|UPDATE|DELETE|NOOP|PROMOTE|ARCHIVE|FORGET|REFLECT
+    target_uri text,
+    before     jsonb,
+    after      jsonb,
+    actor      text,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS memory_events_tenant_idx ON memory_events (tenant_id, created_at);
+
+CREATE TABLE IF NOT EXISTS syntheses (
+    synthesis_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id    text NOT NULL REFERENCES tenants(tenant_id),
+    scope_uri    text,
+    summary      text NOT NULL,
+    payload      jsonb,
+    model        text,
+    tokens_used  integer NOT NULL DEFAULT 0,
+    created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS jobs (
+    job_id     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id  text NOT NULL DEFAULT 'default',
+    kind       text NOT NULL,
+    payload    jsonb NOT NULL DEFAULT '{}',
+    status     text NOT NULL DEFAULT 'queued',  -- queued|running|done|failed
+    attempts   integer NOT NULL DEFAULT 0,
+    max_attempts integer NOT NULL DEFAULT 3,
+    run_after  timestamptz NOT NULL DEFAULT now(),
+    locked_by  text,
+    locked_at  timestamptz,
+    last_error text,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS jobs_claim_idx ON jobs (status, run_after);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    audit_id   bigserial PRIMARY KEY,
+    tenant_id  text,
+    actor      text,
+    action     text NOT NULL,
+    target_uri text,
+    detail     jsonb,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS uri_registry (
+    uri      text PRIMARY KEY,
+    bereich  text NOT NULL,
+    tenant   text NOT NULL,
+    kind     text NOT NULL,
+    ref_id   uuid,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO tenants (tenant_id, name) VALUES ('default', 'Default Tenant')
+    ON CONFLICT (tenant_id) DO NOTHING;

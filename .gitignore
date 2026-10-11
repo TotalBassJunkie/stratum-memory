@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Secrets — never commit
+secrets/*
+!secrets/.gitkeep
+*.env
+.env
+
+# Local data
+data/
+kb-vault/
+/mnt/
+
+# Bulk-importer checkpoint + host log (never committed)
+var/
+import_host.log
+
+# OS
+.DS_Store
+Thumbs.db

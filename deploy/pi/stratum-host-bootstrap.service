@@ -1,0 +1,27 @@
+# Renamed from stratum-db.service (WP-14 review B6): the name suggested a
+# database unit. This is a HOST bootstrap (zram + SSD swap + sysctl) that must
+# run *before* Docker, not the DB container itself.
+[Unit]
+Description=Stratum-Memory host bootstrap (zram + SSD swap + sysctl) before Docker
+Documentation=file:/opt/stratum/deploy/pi/README.md
+# The DB container must never start before swap/sysctl are in place.
+After=local-fs.target
+Before=docker.service
+Wants=local-fs.target
+# The swapfile and all container data live on the USB-3 SSD; booting without it
+# (or before it is mounted) would silently fall back to microSD/root. Pull the
+# mount in as a hard requirement.
+RequiresMountsFor=/mnt/ssd
+
+[Service]
+# One-shot, idempotent: configures the 4 GB SSD swapfile (prio 10), the 1 GB
+# zram device (prio 100) and the vm.* sysctl values, then exits.
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/stratum/deploy/pi/swap-setup.sh
+# Re-run if the SSD was (re)mounted after boot.
+ExecStartPost=/bin/true
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

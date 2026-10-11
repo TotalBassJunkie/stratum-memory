@@ -1,0 +1,74 @@
+# Stratum-Memory — Caddyfile (Server-Profil, WP-14b)
+#
+# Terminiert TLS (ACME/Let's Encrypt) und ist der einzige öffentlich erreichbare
+# Dienst (Ports 80/443). Als einziger Upstream wird der MCP-HTTP-Endpunkt von
+# `stratum-core:8088` durchgereicht (Compose-Netz, ADR-0007 / MASTER-PLAN §10.5).
+#
+# Start: docker compose -f docker-compose.yml -f deploy/server/docker-compose.override.yml up -d
+#
+# --------------------------------------------------------------------------
+# >>> PLATZHALTER: DOMAIN <<<
+# Ersetze die Domain unten durch die echte, öffentlich auflösende Domain, deren
+# A/AAAA-Record auf diesen Host zeigt. Sie wird NICHT als Secret behandelt und
+# ist hier absichtlich als Umgebungsvariable mit harmlosem Default hinterlegt.
+#   * Docker:   STRATUM_DOMAIN=memory.example.com docker compose ... up -d
+#   * nativ:    export STRATUM_DOMAIN=memory.example.com
+# Im Repo steht absichtlich NUR der reservierte Beispiel-Default (RFC 2606,
+# `.invalid`) — kein echter Hostname, kein Secret.
+# --------------------------------------------------------------------------
+
+{$STRATUM_DOMAIN:stratum.example.invalid} {
+	# Automatisches HTTPS über ACME (Let's Encrypt). Caddy holt und erneuert das
+	# Zertifikat selbst; E-Mail für Ablauf-Warnungen ist bewusst nicht gesetzt.
+	encode zstd gzip
+
+	# Sicherheitsrelevante Header. HSTS nur nach bestandener TLS-Prüfung setzen;
+	# hier mit max-age von einem Jahr und inklusive Subdomains — konsistent mit
+	# der Beschreibung in deploy/server/README.md.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Cross-Origin-Resource-Policy "same-origin"
+		# Der MCP-Server ist kein Browser-Frontend: keine Einbettung, keine
+		# Ausführung im Browser-Kontext.
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+		-Server
+	}
+
+	# Nur den MCP-HTTP-Endpunkt öffentlich machen. FastMCP/streamable-http
+	# lauscht standardmäßig auf Pfad `/mcp`; alles andere wird hart abgewiesen,
+	# damit keine versehentlich exponierten Zusatzrouten erreichbar sind.
+	handle /mcp* {
+		reverse_proxy stratum-core:8088 {
+			# Ungebuffertes Streaming für SSE/Streamable-HTTP durchreichen.
+			flush_interval -1
+			# Host-Header des Upstreams normalisieren.
+			header_up Host {upstream_hostport}
+		}
+	}
+
+	# Health-Probe: KEIN statisches "ok" mehr, sondern durchgereicht an den
+	# echten Readiness-Endpunkt des Cores (`GET /health`, siehe
+	# stratum/mcp/server.py). So meldet /healthz tatsächlich den DB-/Queue-/
+	# LLM-Zustand, statt einen blinden 200 zu lügen (B19).
+	handle /healthz {
+		rewrite * /health
+		reverse_proxy stratum-core:8088 {
+			flush_interval -1
+			header_up Host {upstream_hostport}
+		}
+	}
+
+	handle {
+		respond "Not Found" 404
+	}
+
+	# Access-/Error-Log an stdout (Container-Logs). Keine Query-Strings loggen,
+	# da MCP-Aufrufe Nutzdaten/URIs enthalten können.
+	log {
+		output stdout
+		format console
+	}
+}

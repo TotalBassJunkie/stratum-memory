@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Stratum Memory">
+  <title>Stratum Memory</title>
+  <defs>
+    <linearGradient id="bgg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#111c33"/><stop offset="1" stop-color="#0B1220"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#bgg)"/>
+  <g>
+  <polygon points="52.00,68.00 128.00,104.00 128.00,117.00 52.00,81.00" fill="#976106"/>
+  <polygon points="128.00,104.00 204.00,68.00 204.00,81.00 128.00,117.00" fill="#bf7b08"/>
+  <polygon points="128.00,32.00 204.00,68.00 128.00,104.00 52.00,68.00" fill="#F59E0B" stroke="#ffc50d" stroke-width="1.5"/>
+  <polygon points="52.00,98.00 128.00,134.00 128.00,147.00 52.00,111.00" fill="#158293"/>
+  <polygon points="128.00,134.00 204.00,98.00 204.00,111.00 128.00,147.00" fill="#1aa4b9"/>
+  <polygon points="128.00,62.00 204.00,98.00 128.00,134.00 52.00,98.00" fill="#22D3EE" stroke="#2affff" stroke-width="1.5"/>
+  <polygon points="52.00,128.00 128.00,164.00 128.00,177.00 52.00,141.00" fill="#086690"/>
+  <polygon points="128.00,164.00 204.00,128.00 204.00,141.00 128.00,177.00" fill="#0a80b5"/>
+  <polygon points="128.00,92.00 204.00,128.00 128.00,164.00 52.00,128.00" fill="#0EA5E9" stroke="#11ceff" stroke-width="1.5"/>
+  <polygon points="52.00,158.00 128.00,194.00 128.00,207.00 52.00,171.00" fill="#242d3d"/>
+  <polygon points="128.00,194.00 204.00,158.00 204.00,171.00 128.00,207.00" fill="#2e394d"/>
+  <polygon points="128.00,122.00 204.00,158.00 128.00,194.00 52.00,158.00" fill="#3B4A63" stroke="#495c7b" stroke-width="1.5"/>
+  </g>
+</svg>

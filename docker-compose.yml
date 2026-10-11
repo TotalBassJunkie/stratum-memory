@@ -1,0 +1,105 @@
+# Stratum-Memory — base compose (Pi 4 / 8GB profile). No top-level version key (Compose spec).
+services:
+  stratum-db:
+    image: pgvector/pgvector:0.8.6-pg18
+    restart: unless-stopped
+    command: >
+      postgres
+      -c shared_buffers=1GB
+      -c effective_cache_size=3GB
+      -c work_mem=16MB
+      -c maintenance_work_mem=128MB
+      -c max_connections=30
+      -c random_page_cost=1.1
+      -c autovacuum_max_workers=1
+    environment:
+      POSTGRES_DB: stratum
+      POSTGRES_USER: stratum
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+    secrets: [pg_password]
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./init:/docker-entrypoint-initdb.d:ro
+    shm_size: "512mb"
+    mem_limit: 2g
+    memswap_limit: 2g
+    deploy:
+      resources:
+        limits: { memory: 2g, cpus: "2.0" }
+        reservations: { memory: 1g }
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stratum -d stratum"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  stratum-core:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      stratum-db:
+        condition: service_healthy
+    environment:
+      STRATUM_DB_USER: stratum_app
+      STRATUM_DB_PASSWORD_FILE: /run/secrets/app_password
+      STRATUM_DB_HOST: stratum-db
+      STRATUM_DB_NAME: stratum
+      STRATUM_MCP_TRANSPORT: streamable-http
+      STRATUM_MCP_HOST: 0.0.0.0
+      STRATUM_MCP_PORT: "8088"
+      # NOTE: settings use the STRATUM_ env prefix (see stratum/config.py).
+      STRATUM_LLM_BASE_URL: ${LLM_BASE_URL:-}
+      STRATUM_LLM_API_KEY_FILE: /run/secrets/llm_key
+      STRATUM_LLM_CHAT_MODEL: ${LLM_CHAT_MODEL:-gpt-4o-mini}
+      STRATUM_LLM_EMBED_MODEL: ${LLM_EMBED_MODEL:-text-embedding-3-small}
+      STRATUM_LLM_EMBED_BASE_URL: ${STRATUM_LLM_EMBED_BASE_URL:-}
+    ports:
+      # Host bind address is configurable so the same compose serves a
+      # localhost-only dev box (default) and a LAN/Tailscale-reachable server.
+      - "${STRATUM_BIND_IP:-127.0.0.1}:8088:8088"
+    secrets: [llm_key, app_password]
+    volumes:
+      - kb:/var/stratum/kb
+    deploy:
+      resources:
+        limits: { memory: 1g, cpus: "1.5" }
+
+  stratum-worker:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "stratum.worker"]
+    depends_on:
+      stratum-db:
+        condition: service_healthy
+    environment:
+      STRATUM_DB_USER: stratum_app
+      STRATUM_DB_PASSWORD_FILE: /run/secrets/app_password
+      STRATUM_DB_HOST: stratum-db
+      STRATUM_DB_NAME: stratum
+      STRATUM_REFLECT_BUDGET_TOKENS: "20000"
+      STRATUM_LLM_BASE_URL: ${LLM_BASE_URL:-}
+      STRATUM_LLM_API_KEY_FILE: /run/secrets/llm_key
+      STRATUM_LLM_CHAT_MODEL: ${LLM_CHAT_MODEL:-gpt-4o-mini}
+      STRATUM_LLM_EMBED_MODEL: ${LLM_EMBED_MODEL:-text-embedding-3-small}
+      STRATUM_LLM_EMBED_BASE_URL: ${STRATUM_LLM_EMBED_BASE_URL:-}
+    secrets: [app_password, llm_key]
+    volumes:
+      - kb:/var/stratum/kb
+    deploy:
+      resources:
+        limits: { memory: 1.5g, cpus: "1.5" }
+
+volumes:
+  pgdata:
+  kb:
+secrets:
+  pg_password:
+    file: ./secrets/pg_password
+  app_password:
+    file: ./secrets/app_password
+  llm_key:
+    file: ./secrets/llm_key
+  # Only used by the optional `import` profile (OpenViking -> Stratum). Keep the
+  # file present (even empty) so `docker compose config` never fails.
+  ov_user_key:
+    file: ./secrets/ov_user_key

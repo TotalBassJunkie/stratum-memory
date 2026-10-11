@@ -1,0 +1,115 @@
+# Stratum-Memory — Raspberry Pi 4 / 8 GB deployment override (WP-14).
+#
+# References: MASTER-PLAN.md §10 (Deployment Pi), docs/adr/0009-deployment-pi.md.
+#
+# Usage (see deploy/pi/README.md):
+#   docker compose -f docker-compose.yml -f deploy/pi/docker-compose.override.yml up -d
+#
+# Why an override file and not edits to docker-compose.yml?
+#   The base compose is the *portable* profile: the same file also feeds the
+#   server overlay (WP-14b). The Pi-specific concerns live here so they stay in
+#   one reviewable place:
+#     * hard RAM limits per container (8 GB budget, §10.3),
+#     * the DB swap exclusion (memswap_limit == mem_limit),
+#     * SSD bind mounts for the data that must NOT live on the microSD,
+#     * a restart policy that survives reboots / OOM kills.
+#
+# Merge semantics (Compose spec): single-value keys (mem_limit, memswap_limit,
+#   restart, ...) REPLACE the base value. `volumes` entries are merged by their
+#   container target, so a bind mount declared below with the same target
+#   overrides the named volume from the base (pgdata / kb) while keeping the
+#   base's read-only `./init` mount into the DB untouched.
+#
+# Do NOT add a top-level `version:` key — the Compose spec (used by `docker
+# compose` v2 on the Pi) deprecates it.
+#
+# Data root: the SSD mount point varies between installs (e.g. /mnt/ssd or
+# /mnt/usb). Override it with STRATUM_DATA_ROOT in a `.env` file next to this
+# compose invocation; the default matches deploy/pi/README.md and setup-pi.sh.
+services:
+  stratum-db:
+    # DB runs swap-FREE: memswap_limit == mem_limit. This is the only way to
+    # keep zram *and* the SSD swapfile away from Postgres, which avoids the
+    # known "Postgres + zram thrashing" hazard on the Pi (ADR-0009).
+    # Note: `deploy.resources` has no swap field, so the service-level keys are
+    # authoritative here. 2 GB matches the base profile (§10.2/§10.3).
+    mem_limit: 2g
+    memswap_limit: 2g
+    restart: unless-stopped
+    volumes:
+      # Postgres data directory on the USB-3 SSD, never on the microSD
+      # (write amplification + latency). The base's read-only `./init` mount
+      # at /docker-entrypoint-initdb.d is preserved by the merge.
+      - ${STRATUM_DATA_ROOT:-/mnt/ssd/stratum}/pgdata:/var/lib/postgresql
+
+  stratum-core:
+    # API + MCP server. Cold paths may swap; 1 GB hard cap per §10.3. The DB is
+    # reached over the internal network only, so core never needs DB memory.
+    mem_limit: 1g
+    memswap_limit: 2g
+    restart: unless-stopped
+    environment:
+      # Require a Bearer key on /mcp whenever the endpoint is reachable beyond
+      # localhost (e.g. bound to the Tailscale interface via STRATUM_BIND_IP).
+      # Default on; set STRATUM_REQUIRE_API_KEY=0 only for localhost-only boxes.
+      STRATUM_REQUIRE_API_KEY: ${STRATUM_REQUIRE_API_KEY:-1}
+    # Reach host-run services (e.g. LLM_BASE_URL=http://host.docker.internal:3001/v1)
+    # the same way OpenViking does. Linux gets the host gateway explicitly.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Git vault (markdown KB) on the SSD: commits + fsync are write-heavy.
+      - ${STRATUM_DATA_ROOT:-/mnt/ssd/stratum}/kb:/var/stratum/kb
+
+  stratum-worker:
+    # Ingestion / Curator / Reflect. Batch and swap-tolerant, hence a higher
+    # swap ceiling; 1.5 GB hard cap per §10.3 (lower this first if the Pi ever
+    # shows CPU throttling, see §10.3).
+    mem_limit: 1.5g
+    memswap_limit: 3g
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${STRATUM_DATA_ROOT:-/mnt/ssd/stratum}/kb:/var/stratum/kb
+
+  # One-off bulk importer (OpenViking -> Stratum). Not started by default; run
+  # explicitly with:  docker compose ... --profile import up stratum-import
+  # It reads the OpenViking REST API on the host and writes through the normal
+  # pipeline. Structure mode = chunks+embeddings only (cheap); --mode ecl adds
+  # LLM fact extraction.
+  stratum-import:
+    build: .
+    profiles: ["import"]
+    restart: "no"
+    depends_on:
+      stratum-db:
+        condition: service_healthy
+    environment:
+      STRATUM_DB_USER: stratum_app
+      STRATUM_DB_PASSWORD_FILE: /run/secrets/app_password
+      STRATUM_DB_HOST: stratum-db
+      STRATUM_DB_NAME: stratum
+      STRATUM_LLM_BASE_URL: ${LLM_BASE_URL:-}
+      STRATUM_LLM_API_KEY_FILE: /run/secrets/llm_key
+      STRATUM_LLM_CHAT_MODEL: ${LLM_CHAT_MODEL:-auto}
+      STRATUM_LLM_EMBED_MODEL: ${LLM_EMBED_MODEL:-auto}
+      # Optional separate embedding endpoint (e.g. local Ollama). Empty => reuse
+      # the chat provider. On this Pi we keep it empty: Ollama's bge-m3 is too
+      # slow under CPU inference.
+      STRATUM_LLM_EMBED_BASE_URL: ${STRATUM_LLM_EMBED_BASE_URL:-}
+      OPENVIKING_BASE_URL: ${OPENVIKING_BASE_URL:-http://host.docker.internal:1933}
+      OPENVIKING_API_KEY_FILE: /run/secrets/ov_user_key
+      OPENVIKING_ACCOUNT: ${OPENVIKING_ACCOUNT:-default}
+      OPENVIKING_USER: ${OPENVIKING_USER:-default}
+      STRATUM_IMPORT_STATE: /app/var/import_openviking.state
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    secrets: [app_password, llm_key, ov_user_key]
+    volumes:
+      - ${STRATUM_DATA_ROOT:-/mnt/ssd/stratum}/kb:/var/stratum/kb
+      - ./var:/app/var
+    working_dir: /app
+    # Uses the image entrypoint (fixes secret perms, drops to `stratum`), then
+    # runs the importer with the given args.
+    command: ["python", "scripts/import_openviking.py", "--mode", "structure", "--tenant", "default"]

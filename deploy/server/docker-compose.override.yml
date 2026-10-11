@@ -1,0 +1,130 @@
+# Stratum-Memory — Server-Profil (Multi-Tenant) · WP-14b
+#
+# Compose-Overlay für den Server-Betrieb (MASTER-PLAN §10.5). Es wird ZUSÄTZLICH
+# zur Basis gestartet, niemals allein:
+#
+#   docker compose -f docker-compose.yml -f deploy/server/docker-compose.override.yml up -d
+#
+# Unterschiede zum Pi-Profil (§10):
+#   * `stratum-core` schreibt Vektoren als `vector(1024)` statt `halfvec(1024)`
+#     (kein fp16 auf dem Server; §5.2 / §10.5).
+#   * Postgres erhält mehr RAM/Verbindungen für mehrere Tenants.
+#   * `stratum-caddy` terminiert TLS und ist der einzige öffentlich erreichbare
+#     Dienst (Ports 80/443). `stratum-core` bleibt wie in der Basis host-seitig
+#     auf 127.0.0.1 gebunden und wird über das Compose-Netz angesprochen.
+#
+# Keine Secrets in dieser Datei: Passwörter/Keys kommen weiterhin aus Docker-
+# Secrets (siehe Basis, `*_FILE`-Variablen).
+services:
+  # ------------------------------------------------------------------ Postgres
+  # Server-Tuning: mehr shared_buffers/Cache und Verbindungen für mehrere Tenants.
+  # `command` wird von Compose als Ganzes ersetzt, daher vollständig wiederholen.
+  stratum-db:
+    # The schema renderer (init/003_schema.sh) reads STRATUM_VECTOR_TYPE at
+    # first-time init to pick `vector(1024)` over `halfvec(1024)`. The DB must
+    # therefore carry the same profile as core/worker, or the columns are
+    # created fp16 while the app casts full-precision values into them (B2).
+    environment:
+      STRATUM_VECTOR_TYPE: vector
+    command: >
+      postgres
+      -c shared_buffers=4GB
+      -c effective_cache_size=12GB
+      -c work_mem=32MB
+      -c maintenance_work_mem=256MB
+      -c max_connections=100
+      -c random_page_cost=1.1
+      -c autovacuum_max_workers=3
+    # shared_buffers=4GB braucht ein größeres Container-Limit als die 2g der Basis;
+    # memswap_limit == mem_limit bleibt => die DB swappt auch im Serverprofil NICHT.
+    mem_limit: 8g
+    memswap_limit: 8g
+    shm_size: "1gb"
+    deploy:
+      resources:
+        limits: { memory: 8g, cpus: "4.0" }
+        reservations: { memory: 4g }
+
+  # ---------------------------------------------------------------------- Core
+  stratum-core:
+    environment:
+      # MCP resident über HTTP (siehe ADR-0007 / §10.6). Container-gebunden an
+      # 0.0.0.0:8088; Caddy davor terminiert TLS.
+      STRATUM_MCP_TRANSPORT: streamable-http
+      # Server-Profil: vollpräzise Vektoren, KEIN fp16 (§5.2 / §10.5).
+      STRATUM_VECTOR_TYPE: vector
+      # Der Server exponiert MCP öffentlich über Caddy. Ohne API-Key-Gate wäre
+      # der Endpunkt unauthentifiziert erreichbar (B1). Default `1` erzwingt
+      # Bearer-Tokens auf `/mcp`; auf `0` nur für ein rein lokales Debugging
+      # setzen (nie für einen öffentlich erreichbaren Host).
+      STRATUM_REQUIRE_API_KEY: ${STRATUM_REQUIRE_API_KEY:-1}
+
+  # -------------------------------------------------------------------- Worker
+  # Der Worker (Ingestion/Curator/Reflect) schreibt ebenfalls Vektoren und castet
+  # in `curator.py`/`graph.py` anhand von `Settings.vector_type`. Er MUSS daher
+  # dasselbe Vektorprofil wie der Core fahren — sonst schreibt er `halfvec` in
+  # eine `vector(1024)`-Spalte (Server-Profil). Der Typ ist pro Deployment
+  # einheitlich; ein Worker mit Default `halfvec` wäre ein stiller Datenschaden.
+  stratum-worker:
+    environment:
+      # Server-Profil: vollpräzise Vektoren, KEIN fp16 (§5.2 / §10.5).
+      STRATUM_VECTOR_TYPE: vector
+      # Der Job-Claim ist RLS-gescoped: der Worker sieht nur Jobs der Tenants,
+      # die er abfragt. Im Multi-Tenant-Betrieb hier die Tenant-Liste setzen
+      # (kommasepariert); Default ist `default` (Pi-Einzelmandant).
+      #   STRATUM_WORKER_TENANTS: acme,globex
+      STRATUM_WORKER_TENANTS: ${STRATUM_WORKER_TENANTS:-default}
+
+  # --------------------------------------------------------------------- Caddy
+  # Reverse-Proxy + automatisierte TLS-Terminierung (ACME). Einziger öffentlich
+  # exponierter Dienst; proxyt auf `stratum-core:8088` im Compose-Netz.
+  stratum-caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      stratum-core:
+        condition: service_started
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # PLATZHALTER-Domain (Startwert). Über die Umgebung überschreiben:
+      #   STRATUM_DOMAIN=memory.example.com docker compose ... up -d
+      # Kein Secret — das TLS-Zertifikat holt Caddy selbst über ACME.
+      STRATUM_DOMAIN: ${STRATUM_DOMAIN:-stratum.example.invalid}
+    volumes:
+      - ./deploy/server/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    deploy:
+      resources:
+        limits: { memory: 256m, cpus: "0.5" }
+
+  # ------------------------------------------------------------------ PgBouncer
+  # OPTIONAL (nur wenn `max_connections=100` zum Engpass wird, z. B. bei vielen
+  # kurzlebigen MCP-Clients): PgBouncer als Connection-Pooler zwischen Core/Worker
+  # und DB einschieben. Nicht aktiv, da für den Start unnötig.
+  #
+  #   pgbouncer:
+  #     image: edoburu/pgbouncer:latest
+  #     restart: unless-stopped
+  #     depends_on:
+  #       stratum-db:
+  #         condition: service_healthy
+  #     environment:
+  #       DB_HOST: stratum-db
+  #       DB_USER: stratum_app
+  #       DB_NAME: stratum
+  #       AUTH_TYPE: scram-sha-256
+  #       POOL_MODE: transaction
+  #       MAX_CLIENT_CONN: "500"
+  #       DEFAULT_POOL_SIZE: "25"
+  #     # App-Zugang dann über pgbouncer:5432 statt stratum-db:5432
+  #
+  # Wichtig: PgBouncer im `transaction`-Pooling verträgt sich mit `SET LOCAL`
+  # (`set_config('stratum.tenant', …, true)`) — NICHT auf `session`-Pooling
+  # umstellen, sonst verliert die RLS ihren pro-Transaktion gesetzten Tenant.
+
+volumes:
+  caddy_data:
+  caddy_config:

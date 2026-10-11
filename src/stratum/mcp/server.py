@@ -159,8 +159,13 @@ class _ApiKeyAuthMiddleware:
         self.mcp_path = mcp_path
         self._verify = verify or _verify_bearer
 
+    def _is_protected(self, path: str) -> bool:
+        # The MCP endpoint and every dashboard API route require the key (the
+        # HTML shell and the /health,/metrics probes stay public).
+        return path == self.mcp_path or path.startswith("/dashboard/api")
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope.get("path") != self.mcp_path:
+        if scope["type"] != "http" or not self._is_protected(scope.get("path", "")):
             await self.app(scope, receive, send)
             return
 
@@ -242,6 +247,25 @@ def build_server(
         response = Response(content=body)
         response.headers["content-type"] = content_type
         return response
+
+    # Operator dashboard (HTML shell + read-mostly JSON API). Reuses the same
+    # optional key gate: a request's scope/tenant come from the auth context the
+    # middleware bound, when the gate is on.
+    from ..dashboard import register_dashboard  # noqa: PLC0415 - lazy import
+
+    def _dash_tenant(_request: Request) -> str:
+        auth = _CURRENT_AUTH.get() or ctx.auth
+        return auth.tenant if auth else "default"
+
+    def _dash_gate(_request: Request, scope: str) -> Response | None:
+        if not _require_api_key():
+            return None  # open local mode
+        auth = _CURRENT_AUTH.get()
+        if auth is None or not auth.has_scope(scope):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        return None
+
+    register_dashboard(mcp, tenant_for=_dash_tenant, ensure_scope=_dash_gate)
 
     @mcp.tool()
     async def stratum_write(

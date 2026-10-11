@@ -164,6 +164,21 @@ in front of `stratum-core:8088`. See `deploy/server/README.md`.
 
 The ten tools, their scopes and error codes: **`docs/api-reference.md`**.
 
+## Operator dashboard
+
+A small, dependency-free single-page console ships with the MCP HTTP transport
+(no CDN, no build step):
+
+- **http://127.0.0.1:8088/dashboard** (or `https://$STRATUM_DOMAIN/dashboard` behind TLS)
+
+It shows health/counts, areas, browse + L0/L1/L2 reader, hybrid search, the
+staging gate, the append-only event journal and two actions (`promote`,
+`reflect`). The HTML shell, `/health` and `/metrics` are public;
+`/dashboard/api/*` reuses the MCP auth — with `STRATUM_REQUIRE_API_KEY=1` set the
+`key` button in the top bar stores a `Bearer stk_…` token. Full endpoint list
+(`curl` examples), a screenshot description and troubleshooting:
+**`docs/dashboard.md`**.
+
 ## Configuration
 
 All settings come from environment variables with the `STRATUM_` prefix
@@ -181,6 +196,7 @@ from files (`*_FILE`), never hard-coded.
 | `MASTER-PLAN.md` | Full, frozen specification (§1–§16) |
 | `docs/adr/` | Architecture decision records |
 | `docs/api-reference.md` | The ten MCP tools: signatures, scopes, error codes |
+| `docs/dashboard.md` | Operator dashboard: URL, auth, JSON API (`curl`), troubleshooting |
 | `docs/operations-handbuch.md` | Deployment, health, logs, reflect, rollback, troubleshooting |
 | `docs/backup-restore.md` | Backup/restore, retention, RTO/RPO, restore drill |
 | `deploy/pi/README.md`, `deploy/server/README.md` | Deployment profiles |

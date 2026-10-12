@@ -1227,24 +1227,25 @@ def test_html_shell_is_public_even_with_a_denying_gate():
 
 
 def test_html_shell_has_the_core_elements():
+    """The JARVIS-style shell: rail + topbar, brand, KPI cards, API wiring."""
     html = dashboard._DASHBOARD_HTML
-    assert 'id="kpis"' in html
     assert "dashboard/api/overview" in html
-    assert 'class="mark"' in html  # the logo SVG
-    assert "<svg" in html
+    assert "<svg" in html  # the logo favicon
     assert 'id="hstatus"' in html
+    # JARVIS shell tokens (Tokyo-Night palette + rail)
+    assert "#07080c" in html and "#ff9e64" in html and "#ff4d5e" in html
+    assert 'id="rail"' in html and 'id="nav"' in html and 'id="pages"' in html
+    assert "ov-hello" in html and "ov-cards" in html  # the tile overview
+    assert 'id="htenant"' in html  # tenant switcher
 
 
-def test_html_shell_wires_the_sidebar_badges_and_areas_route():
-    """B2: the staging badge is set and the Memories view loads /areas."""
+def test_html_shell_wires_sidebar_badges_and_areas_route():
     html = dashboard._DASHBOARD_HTML
-    # staging badge is actually populated from the overview counts
-    assert '$("#n-staging").textContent=num(c.staging_pending)' in html
-    # the areas route is used by the client and drives the #n-areas badge
+    # staging + memories badges populated from overview counts
+    assert 'id="k-stg"' in html and 'id="k-mem"' in html and 'id="k-facts"' in html
+    assert "staging_pending" in html
+    # the areas route is used by the client (memory areas tile)
     assert "dashboard/api/areas" in html
-    assert '$("#n-areas").textContent=num(areas.length)' in html
-    # it is wired into the memories view
-    assert 'if(view==="memories"){doBrowse();loadAreas();}' in html
 
 
 def test_html_shell_escapes_numeric_search_and_staging_values():

@@ -629,481 +629,434 @@ def register_dashboard(
 # --------------------------------------------------------------------------- #
 
 _DASHBOARD_HTML = r"""<!doctype html>
-<html lang="en">
+<html lang="en" translate="no">
 <head>
 <meta charset="utf-8">
+<meta name="google" content="notranslate">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Stratum Studio</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230B1220'/><rect x='7' y='7' width='18' height='3.4' rx='1.7' fill='%233B4A63'/><rect x='6' y='12' width='20' height='3.4' rx='1.7' fill='%2322D3EE'/><rect x='5' y='17' width='22' height='3.4' rx='1.7' fill='%230EA5E9'/><rect x='4' y='22' width='24' height='3.4' rx='1.7' fill='%23F59E0B'/></svg>">
+<title>Stratum</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='13' fill='%2307080c'/><polygon points='32,14 52,25 32,36 12,25' fill='%23ff9e64'/><polygon points='32,26 50,36 32,46 14,36' fill='%237aa2f7'/><polygon points='32,36 46,44 32,52 18,44' fill='%23ff4d5e'/></svg>">
 <style>
   :root{
-    --bg:#0B1220; --panel:#111c33; --panel-2:#0e1830; --line:#1e293b; --line-2:#24344d;
-    --text:#E8EEF7; --dim:#9fb0c9; --faint:#7c8ba6;
-    --accent:#F59E0B; --accent-2:#22D3EE; --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
-    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    --r:12px; --r-sm:8px;
-    --sidebar:236px;
+    --rail:244px; --top:40px;
+    --bg:#07080c; --ink:#e6e8ef; --dim:#7d8399; --line:#1b1f2b;
+    --panel:#0d1017e6; --accent:#ff9e64; --brand:#ff4d5e; --brandglow:#ff2d4088;
+    --hud-cool:#7aa2f7;
+    --mono:ui-monospace,SFMono-Regular,Consolas,Menlo,monospace;
   }
   *{box-sizing:border-box}
-  html,body{margin:0;height:100%}
-  body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;
-       -webkit-font-smoothing:antialiased;display:grid;grid-template-columns:var(--sidebar) 1fr;
-       grid-template-rows:56px 1fr;grid-template-areas:"brand topbar" "nav main";height:100vh;overflow:hidden}
-  @media (max-width:720px){body{grid-template-columns:1fr;grid-template-areas:"topbar" "main"}}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--ink);overflow:hidden;font:13px/1.5 ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;
+       display:grid;grid-template-columns:var(--rail) 1fr;grid-template-rows:100%}
+  @media (max-width:820px){body{grid-template-columns:1fr}}
+  button,select,input{font:inherit;color:var(--ink)}
+  button{cursor:pointer}
   a{color:inherit}
-  /* brand */
-  .brand{grid-area:brand;display:flex;align-items:center;gap:10px;padding:0 16px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
-  .brand .mark{width:24px;height:24px;flex:none}
-  .brand b{font-weight:700;letter-spacing:-.2px;font-size:15px}
-  .brand small{color:var(--dim);font-size:9.5px;letter-spacing:.24em;text-transform:uppercase;display:block;margin-top:1px}
-  @media (max-width:720px){.brand{display:none}}
-  /* topbar */
-  .topbar{grid-area:topbar;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--line);
-          background:linear-gradient(180deg,#0d1730,#0B1220);min-width:0}
-  .chip{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:999px;padding:5px 12px;color:var(--dim);font-size:12.5px;white-space:nowrap;background:var(--panel-2)}
-  .chip .dot{width:8px;height:8px;border-radius:50%;background:var(--faint)}
-  .chip .dot.ok{background:var(--ok)}.chip .dot.bad{background:var(--bad)}.chip .dot.warn{background:var(--warn)}
-  .chip select{background:transparent;border:0;color:var(--text);font-family:var(--mono);max-width:170px;padding:1px}
-  .chip select:focus-visible{outline:2px solid var(--accent-2);outline-offset:2px;border-radius:5px}
-  .acct{display:inline-flex;align-items:center;gap:9px;border:1px solid var(--line);border-radius:999px;padding:4px 12px 4px 4px;background:var(--panel-2);white-space:nowrap}
-  .acct .av{width:26px;height:26px;border-radius:50%;background:linear-gradient(140deg,#0EA5E9,#F59E0B);display:grid;place-items:center;font-weight:700;color:#08111f;font-size:12px}
-  .acct small{display:block;color:var(--faint);font-size:10px;line-height:1}
-  .spacer{flex:1}
-  button,select,input{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);padding:7px 11px}
-  button{cursor:pointer;transition:transform .06s ease,border-color .15s ease,background .15s ease}
-  button:hover{border-color:var(--line-2)} button:active{transform:translateY(1px)}
-  button.primary{background:var(--accent);color:#1b1300;border-color:transparent;font-weight:600}
-  button.ghost{background:transparent}
-  input::placeholder{color:var(--faint)}
-  :focus-visible{outline:2px solid var(--accent-2);outline-offset:2px}
-  /* nav */
-  nav{grid-area:nav;border-right:1px solid var(--line);padding:12px 10px 28px;overflow:auto;background:linear-gradient(180deg,#0c1529,#0B1220)}
-  @media (max-width:720px){nav{position:fixed;left:0;top:56px;bottom:0;width:var(--sidebar);background:var(--panel-2);transform:translateX(-100%);transition:transform .18s ease;z-index:30}
-    nav.open{transform:none}}
-  nav .grp{color:var(--faint);font-size:10px;letter-spacing:.18em;text-transform:uppercase;margin:14px 10px 6px;font-weight:600}
-  nav .grp:first-child{margin-top:4px}
-  nav a{display:flex;align-items:center;gap:10px;padding:8px 11px;border-radius:var(--r-sm);color:var(--dim);text-decoration:none;cursor:pointer;font-size:13px;line-height:1}
-  nav a .ic{width:16px;height:16px;flex:none;opacity:.85}
-  nav a:hover{background:#15233f;color:var(--text)}
-  nav a.active{background:#15233f;color:var(--text);box-shadow:inset 2px 0 0 var(--accent)}
-  nav a .k{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint)}
-  /* main */
-  main{grid-area:main;overflow:auto;padding:22px 26px 72px;min-width:0}
-  .view{display:none;animation:fade .18s ease}
-  .view.active{display:block}
-  @keyframes fade{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
-  @media (prefers-reduced-motion:reduce){.view{animation:none}button{transition:none}}
-  .pagehead{margin:0 0 18px}
-  h1{font-size:19px;margin:0 0 3px;letter-spacing:-.2px}
-  .sub{color:var(--dim);margin:0;font-size:13px;max-width:70ch}
-  .grid{display:grid;gap:14px}
-  .kpis{grid-template-columns:repeat(auto-fit,minmax(158px,1fr))}
-  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;position:relative;overflow:hidden}
-  .kpi:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent-2);opacity:.55}
-  .kpi.amber:before{background:var(--accent)}.kpi.ok:before{background:var(--ok)}
-  .kpi .n{font-family:var(--mono);font-size:26px;font-weight:600;letter-spacing:-.5px}
-  .kpi .l{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.13em;margin-top:4px}
-  .kpi .d{color:var(--faint);font-size:11.5px;margin-top:6px}
-  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
-  .panel h2{margin:0;padding:12px 15px;font-size:12px;text-transform:uppercase;letter-spacing:.14em;color:var(--dim);border-bottom:1px solid var(--line);font-weight:600;display:flex;align-items:center;gap:10px}
-  .panel h2 .k{margin-left:auto;font-family:var(--mono);color:var(--faint);font-size:11px;text-transform:none;letter-spacing:0}
-  .panel .body{padding:13px 15px}
+  /* ---- rail ---- */
+  #rail{grid-column:1;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);background:#0a0c12}
+  @media (max-width:820px){#rail{position:fixed;left:0;top:0;bottom:0;width:var(--rail);transform:translateX(-100%);transition:transform .18s ease;z-index:30}
+    #rail.open{transform:none}}
+  #railbrand{padding:14px 16px 10px}
+  #railbrand b{font-size:15px;letter-spacing:.16em;color:var(--brand);text-shadow:0 0 4px var(--brand),0 0 14px var(--brandglow),0 0 34px var(--brandglow)}
+  #railbrand span{color:var(--dim);font-size:15px;letter-spacing:.16em}
+  #railbrand small{display:block;color:var(--dim);font-size:10px;letter-spacing:.07em;margin-top:3px}
+  #nav{padding:6px 8px 10px;display:flex;flex-direction:column;gap:2px;flex:none}
+  #nav .grp{color:#5d6377;font-size:9px;letter-spacing:.16em;text-transform:uppercase;font-weight:600;margin:9px 10px 3px}
+  #nav button{display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;border:1px solid transparent;border-radius:8px;background:none;color:var(--dim);font-size:12px;text-align:left;cursor:pointer}
+  #nav button .ic{width:17px;text-align:center;flex:none;font-size:13px}
+  #nav button .k{margin-left:auto;font-family:var(--mono);font-size:10px;color:#5d6377}
+  #nav button:hover{background:#12151f;color:var(--ink)}
+  #nav button[aria-current="page"]{background:#171b26;color:var(--ink);border-color:#39405a}
+  #raildock{flex:1;min-height:0;display:flex;flex-direction:column;border-top:1px solid var(--line);background:#0b0d13}
+  #raildock .dockhead{padding:8px 12px;font-size:9px;letter-spacing:.16em;color:var(--dim);font-weight:600;border-bottom:1px solid var(--line);flex:none;text-transform:uppercase}
+  #dockbody{flex:1;min-height:0;overflow:auto;padding:9px 10px}
+  /* ---- main ---- */
+  #main{grid-column:2;display:flex;flex-direction:column;min-width:0;min-height:0}
+  #topbar{flex:none;height:var(--top);display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--line);background:#0a0c12}
+  #pagetitle{font-size:10px;letter-spacing:.16em;color:var(--dim);font-weight:600;text-transform:uppercase}
+  #topbar .grow{flex:1}
+  #topbar button{padding:5px 10px;border-radius:7px;font-size:11px;background:#12151d;border:1px solid var(--line);color:var(--ink)}
+  #topbar button:hover{border-color:#39405a}
+  .chip{display:inline-flex;align-items:center;gap:7px;padding:4px 10px;border:1px solid var(--line);border-radius:999px;background:#0d1017;color:var(--dim);font-size:11px;white-space:nowrap}
+  .chip .dot{width:7px;height:7px;border-radius:50%;background:#5d6377}
+  .chip .dot.ok{background:#9ece6a;box-shadow:0 0 6px #9ece6a88}
+  .chip .dot.bad{background:#f7768e}
+  .chip select{background:transparent;border:0;color:var(--ink);font-family:var(--mono);max-width:150px;font-size:11px}
+  #hamb{display:none}@media (max-width:820px){#hamb{display:inline-flex}}
+  #pages{flex:1;position:relative;min-height:0}
+  .page{position:absolute;inset:0;display:none;overflow:auto}
+  .page.on{display:block}
+  /* ---- overview (JARVIS-style tiles) ---- */
+  .ov{padding:20px 22px 34px;max-width:1500px;display:flex;flex-direction:column;gap:14px}
+  .ov-hello{display:flex;align-items:flex-end;gap:14px}
+  .ov-hello h1{margin:0;font-size:21px;font-weight:600;letter-spacing:.01em}
+  .ov-hello .sub{color:var(--dim);font-size:11.5px;margin-top:3px}
+  .ov-hello button{margin-left:auto}
+  .act{padding:7px 13px;border-radius:8px;font-size:12px;background:#12151d;border:1px solid var(--line);color:var(--ink)}
+  .act.go{background:var(--accent);border-color:var(--accent);color:#14100a;font-weight:600}
+  .act:hover{border-color:#39405a}
+  .ov-ask{display:flex;gap:8px}
+  .ov-ask input{flex:1;padding:11px 13px;border-radius:10px;color:var(--ink);background:#10131b;border:1px solid var(--line);font-size:13px}
+  .ov-ask input:focus{outline:none;border-color:#39405a}
+  .ov-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+  .ov-card{background:linear-gradient(160deg,#11141d 0%,#0c0e15 70%);border:1px solid var(--line);border-radius:12px;padding:13px 15px;text-align:left;color:var(--ink);cursor:pointer}
+  .ov-card:hover{border-color:#39405a}
+  .ov-card .k{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);font-weight:600}
+  .ov-card .v{font-family:var(--mono);font-size:26px;font-weight:600;margin-top:6px;letter-spacing:-.5px}
+  .ov-card .d{color:#5d6377;font-size:10.5px;margin-top:3px}
+  .tile{background:linear-gradient(160deg,#11141d 0%,#0c0e15 70%);border:1px solid var(--line);border-radius:12px;padding:12px 14px;min-width:0}
+  .tile-h{font-size:9px;letter-spacing:.16em;color:var(--dim);font-weight:600;text-transform:uppercase;display:flex;gap:8px;align-items:baseline}
+  .tile-h small{letter-spacing:0;text-transform:none;font-size:10.5px;color:#5d6377}
+  .tile-b{margin-top:9px}
+  .ov-two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .ov-wide{grid-template-columns:1.35fr 1fr}
+  @media (max-width:1000px){.ov-two,.ov-wide{grid-template-columns:1fr}}
+  .ov-side{display:flex;flex-direction:column;gap:12px}
+  .kv{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--line);font-size:12px}
+  .kv:last-child{border-bottom:0}
+  .kv b{font-family:var(--mono);font-weight:500;font-variant-numeric:tabular-nums}
+  .kv span{color:var(--dim)}
+  .mini{font-size:11.5px;color:var(--dim);line-height:1.5}
+  .mini b{color:var(--ink);font-weight:500}
+  /* bars (per-day chart) */
+  .chart{margin-top:10px}
+  .chart svg{display:block;width:100%;height:96px}
+  .chart-x{display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:#5d6377;font-variant-numeric:tabular-nums}
+  .chart .none{color:var(--dim);font-size:11.5px}
+  /* tables */
   .tw{overflow:auto;max-width:100%}
-  table{width:100%;border-collapse:collapse;font-size:12.5px;min-width:420px}
-  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
-  th{color:var(--faint);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;position:sticky;top:0;background:var(--panel)}
+  table{width:100%;border-collapse:collapse;font-size:12px;min-width:420px}
+  th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:#5d6377;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.1em}
   tr:last-child td{border-bottom:0}
-  tr.row:hover td{background:#15233f}
-  .mono{font-family:var(--mono)} .dim{color:var(--dim)} .faint{color:var(--faint)}
-  .tag{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:2px 8px;border:1px solid var(--line);border-radius:999px;color:var(--dim)}
-  .tag.amber{color:var(--accent);border-color:#4a3608}.tag.cyan{color:var(--accent-2);border-color:#0e4b57}
-  .tag.ok{color:var(--ok);border-color:#124d38}.tag.bad{color:var(--bad);border-color:#5a2020}
-  .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:15px}
-  .bar input[type=search],.bar input[type=text]{flex:1;min-width:200px}
-  pre{background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r-sm);padding:13px;overflow:auto;font-family:var(--mono);font-size:12px;line-height:1.55;white-space:pre-wrap;word-break:break-word;margin:0}
-  .empty{color:var(--faint);padding:22px 6px;text-align:center}
-  .err{color:var(--bad)} .clickable{cursor:pointer} .clickable:hover{color:var(--accent-2)}
-  .toast{position:fixed;right:20px;bottom:20px;background:var(--panel);border:1px solid var(--line);
-         border-left:3px solid var(--accent);border-radius:var(--r-sm);padding:11px 15px;font-size:12.5px;
-         box-shadow:0 14px 34px rgba(0,0,0,.5);opacity:0;transform:translateY(8px);transition:opacity .2s,transform .2s;pointer-events:none;z-index:50}
+  tr.row:hover td{background:#12151f}
+  .mono{font-family:var(--mono)}.dim{color:var(--dim)}.faint{color:#5d6377}
+  .tag{display:inline-block;font-family:var(--mono);font-size:10px;padding:1.5px 7px;border:1px solid var(--line);border-radius:999px;color:var(--dim)}
+  .tag.amber{color:var(--accent);border-color:#4a3418}.tag.cyan{color:var(--hud-cool);border-color:#22305a}
+  .tag.ok{color:#9ece6a;border-color:#2b4318}.tag.bad{color:#f7768e;border-color:#4a1d24}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 12px}
+  .bar input[type=search],.bar input[type=text]{flex:1;min-width:180px;padding:7px 10px;border-radius:8px;background:#10131b;border:1px solid var(--line)}
+  .bar select{padding:7px 9px;border-radius:8px;background:#10131b;border:1px solid var(--line)}
+  .bar button{padding:7px 12px;border-radius:8px;background:#12151d;border:1px solid var(--line)}
+  pre{background:#0b0d14;border:1px solid var(--line);border-radius:10px;padding:13px;overflow:auto;font-family:var(--mono);font-size:12px;line-height:1.55;white-space:pre-wrap;word-break:break-word;margin:0}
+  .empty{color:var(--dim);padding:18px 4px;text-align:center;font-size:12px}
+  .err{color:#f7768e}.clickable{cursor:pointer}.clickable:hover{color:var(--accent)}
+  .sect{padding:20px 22px 40px;max-width:1500px;display:flex;flex-direction:column;gap:14px}
+  .sect h1{margin:0;font-size:19px;font-weight:600}
+  .sect .sub{color:var(--dim);font-size:12px;margin-top:2px}
+  .toast{position:fixed;right:18px;bottom:18px;background:#0d1017;border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:9px;padding:10px 14px;font-size:12.5px;box-shadow:0 14px 34px rgba(0,0,0,.6);opacity:0;transform:translateY(8px);transition:opacity .2s,transform .2s;pointer-events:none;z-index:50}
   .toast.show{opacity:1;transform:none}
-  .tabs{display:flex;gap:6px;margin-bottom:12px}
-  .tabs button{background:transparent;color:var(--dim)} .tabs button.active{color:var(--text);border-color:var(--accent)}
-  .hamb{display:none}@media (max-width:720px){.hamb{display:inline-flex}}
-  .split{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
-  .muted{color:var(--dim)}
-  .statrow{display:flex;gap:18px;flex-wrap:wrap}
-  .statrow .s{min-width:120px}
-  .statrow .s b{display:block;font-family:var(--mono);font-size:20px}
-  .statrow .s span{color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.12em}
+  :focus-visible{outline:2px solid var(--hud-cool);outline-offset:2px}
+  @media (prefers-reduced-motion:reduce){.toast{transition:none}}
 </style>
 </head>
 <body>
-  <div class="brand">
-    <svg class="mark" viewBox="0 0 256 256" aria-hidden="true"><rect width="256" height="256" rx="56" fill="#111c33"/><polygon points="128,84 204,124 128,164 52,124" fill="#F59E0B"/><polygon points="128,120 200,158 128,196 56,158" fill="#22D3EE"/><polygon points="128,150 192,184 128,218 64,184" fill="#0EA5E9"/><polygon points="128,180 184,210 128,240 72,210" fill="#3B4A63"/></svg>
-    <div><b>Stratum</b><small>Studio</small></div>
+  <aside id="rail">
+    <div id="railbrand"><b>STRATUM</b> <span>MEMORY</span><small>context database</small></div>
+    <nav id="nav"></nav>
+    <div id="raildock">
+      <div class="dockhead">Quick query</div>
+      <div id="dockbody">
+        <input id="dockq" placeholder="ask the store…" style="width:100%;padding:8px 10px;border-radius:8px;background:#10131b;border:1px solid var(--line)">
+        <div id="dockhits" style="margin-top:8px"></div>
+      </div>
+    </div>
+  </aside>
+
+  <div id="main">
+    <div id="topbar">
+      <button id="hamb" aria-label="Toggle navigation">≡</button>
+      <span id="pagetitle">Overview</span>
+      <span class="grow"></span>
+      <span class="chip"><span class="dot" id="hdot"></span><span id="hstatus">connecting…</span></span>
+      <label class="chip" title="Active tenant"><span class="dim">tenant</span><select id="htenant" aria-label="Active tenant"></select></label>
+      <span class="chip" id="hqueue">queue 0</span>
+      <button id="refresh">refresh</button>
+      <button id="keybtn">key</button>
+    </div>
+    <div id="pages"></div>
   </div>
 
-  <header class="topbar">
-    <button class="hamb ghost" id="hamb" aria-label="Toggle navigation" aria-controls="nav" aria-expanded="false">≡</button>
-    <span class="chip" role="status" aria-live="polite"><span class="dot" id="hdot"></span><span id="hstatus">connecting…</span></span>
-    <label class="chip" title="Active tenant"><span class="dim">tenant</span>
-      <select id="htenant" aria-label="Active tenant"></select>
-    </label>
-    <span class="chip" id="hqueue" title="Queued jobs">queue 0</span>
-    <span class="spacer"></span>
-    <button class="ghost" id="refresh" title="Reload">refresh</button>
-    <button class="ghost" id="tokenbtn" title="Set API key">key</button>
-    <span class="acct" title="Account">
-      <span class="av" id="hav">D</span>
-      <span><b id="hacct" style="font-size:12.5px">default</b><small id="hacctsub">Account</small></span>
-    </span>
-  </header>
-
-  <nav id="nav" aria-label="Primary">
-    <div class="grp">Workspace</div>
-    <a data-view="home" class="active" tabindex="0" aria-current="page"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>Home</a>
-    <a data-view="retrieval" tabindex="0"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Retrieval</a>
-    <a data-view="facts" tabindex="0"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Facts <span class="k" id="n-facts">–</span></a>
-    <a data-view="entities" tabindex="0"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="7" r="3"/><path d="M5 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/></svg>Entities</a>
-    <a data-view="memories" tabindex="0"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/></svg>Memories <span class="k" id="n-areas">–</span></a>
-    <a data-view="staging" tabindex="0"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7h18M3 12h18M3 17h18"/></svg>Staging <span class="k" id="n-staging">–</span></a>
-
-    <div class="grp">Activity</div>
-    <a data-view="tasks" tabindex="0"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 12l2.5 2.5L16 9"/></svg>Task Center</a>
-    <a data-view="events" tabindex="0"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5h16M4 10h16M4 15h11"/></svg>Activity Log</a>
-    <a data-view="ops" tabindex="0"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>Operations</a>
-  </nav>
-
-  <main>
-    <section class="view active" id="v-home">
-      <div class="pagehead"><h1>Home</h1><p class="sub">Live state of the active store. All counters are scoped to the selected tenant.</p></div>
-      <div class="grid kpis" id="kpis"></div>
-      <div class="grid" style="grid-template-columns:1fr;margin-top:14px">
-        <div class="panel"><h2>Recent activity <span class="k" id="hometenant"></span></h2><div class="body" id="recent"></div></div>
-      </div>
-    </section>
-
-    <section class="view" id="v-retrieval">
-      <div class="pagehead"><h1>Retrieval</h1><p class="sub">Hybrid retrieval across memories, bi-temporal facts and KV. Vector/hybrid modes need the embedding backend.</p></div>
-      <div class="bar">
-        <input type="search" id="q" placeholder="query…" autocomplete="off" aria-label="Query">
-        <select id="qmode" aria-label="Mode"><option>hybrid</option><option>vector</option><option>graph</option><option>kv</option></select>
-        <select id="qlevel" aria-label="Level"><option>l0</option><option selected>l1</option><option>l2</option></select>
-        <input id="qk" type="number" value="8" min="1" max="50" style="width:74px" aria-label="k">
-        <button class="primary" id="doq">Search</button>
-      </div>
-      <div class="panel"><div class="body" id="qres"><div class="empty">Enter a query.</div></div></div>
-    </section>
-
-    <section class="view" id="v-facts">
-      <div class="pagehead"><h1>Facts</h1><p class="sub">Bi-temporal facts — validity window (world time) and transaction window (system time). Stratum-only.</p></div>
-      <div class="grid kpis" id="factkpis" style="margin-bottom:14px"></div>
-      <div class="bar">
-        <input id="fsubj" placeholder="subject contains…" aria-label="Subject">
-        <input id="fpred" placeholder="predicate contains…" aria-label="Predicate">
-        <button id="dofacts">Filter</button>
-      </div>
-      <div class="panel"><div class="body" id="facts"><div class="empty">Loading…</div></div></div>
-    </section>
-
-    <section class="view" id="v-entities">
-      <div class="pagehead"><h1>Entities</h1><p class="sub">Subjects and objects in the graph, with their fact counts.</p></div>
-      <div class="bar"><input id="entq" placeholder="name contains…" aria-label="Entity name"><button id="doents">Filter</button></div>
-      <div class="panel"><div class="body" id="entities"><div class="empty">Loading…</div></div></div>
-    </section>
-
-    <section class="view" id="v-memories">
-      <div class="pagehead"><h1>Memories</h1><p class="sub">Memory files by area. Open a URI to read it at L0 / L1 / L2.</p></div>
-      <div class="bar">
-        <input id="prefix" placeholder="uri prefix (optional), e.g. stratum://docs/default/openviking/memories" style="flex:1">
-        <button id="dobrowse">Load</button>
-      </div>
-      <div class="panel"><div class="body" id="browse"><div class="empty">Load a prefix.</div></div></div>
-      <div class="panel" id="reader-panel" style="margin-top:14px;display:none">
-        <h2 id="reader-title">Document</h2><div class="body">
-          <div class="tabs" id="reader-tabs"><button data-lvl="l0">L0</button><button data-lvl="l1" class="active">L1</button><button data-lvl="l2">L2</button></div>
-          <pre id="reader"></pre>
-        </div>
-      </div>
-    </section>
-
-    <section class="view" id="v-staging">
-      <div class="pagehead"><h1>Staging</h1><p class="sub">Candidates awaiting promotion through the Curator gate (7 criteria). Stratum-only.</p></div>
-      <div class="bar"><select id="ststatus" aria-label="Status"><option>pending</option><option>approved</option><option>rejected</option></select><button id="dostage">Load</button></div>
-      <div class="panel"><div class="body" id="staging"><div class="empty">Load candidates.</div></div></div>
-    </section>
-
-    <section class="view" id="v-tasks">
-      <div class="pagehead"><h1>Task Center</h1><p class="sub">The job queue (ingest / curate / reflect), claimed with SKIP LOCKED.</p></div>
-      <div class="panel"><div class="body" id="tasks"><div class="empty">Loading…</div></div></div>
-    </section>
-
-    <section class="view" id="v-events">
-      <div class="pagehead"><h1>Activity Log</h1><p class="sub">The append-only journal: one row per write decision (ADD/UPDATE/NOOP/PROMOTE/ARCHIVE/FORGET).</p></div>
-      <div class="panel"><div class="body" id="events"><div class="empty">Loading…</div></div></div>
-    </section>
-
-    <section class="view" id="v-ops">
-      <div class="pagehead"><h1>Operations</h1><p class="sub">Maintenance actions and service endpoints.</p></div>
-      <div class="split">
-        <div class="panel"><h2>Reflect</h2><div class="body">
-          <p class="dim" style="margin-top:0">Enqueue a budgeted reflect run — condenses facts into synthesis candidates (never active writes).</p>
-          <button class="primary" id="doreflect">Enqueue reflect</button>
-        </div></div>
-        <div class="panel"><h2>Endpoints</h2><div class="body" id="endpoints"></div></div>
-      </div>
-    </section>
-  </main>
-
-  <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
-const state={token:localStorage.getItem("stratum_token")||"", tenant:localStorage.getItem("stratum_tenant")||"default"};
+const S={token:localStorage.getItem("stratum_token")||"",tenant:localStorage.getItem("stratum_tenant")||"default"};
 const $=(s,r=document)=>r.querySelector(s);
 const $$=(s,r=document)=>[...r.querySelectorAll(s)];
-function auth(){return state.token?{"Authorization":"Bearer "+state.token}:{};}
-function withTenant(path){return state.tenant?(path+(path.includes("?")?"&":"?")+"tenant="+encodeURIComponent(state.tenant)):path;}
-async function api(path,opts={}){
-  const res=await fetch(withTenant(path),{...opts,headers:{"Accept":"application/json",...(opts.headers||{}),...auth()}});
-  if(res.status===401||res.status===403){throw new Error("AUTH");}
-  return res.json();
-}
-function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("show");clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove("show"),2400);}
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const num=n=>Number(n||0).toLocaleString("en-US");
 const fmtNum=v=>{const n=Number(v);return esc(Number.isFinite(n)?n.toFixed(3):"—");};
-const short=s=>{s=String(s??"");return s.length>64?s.slice(0,61)+"…":s;};
+const short=s=>{s=String(s??"");return s.length>70?s.slice(0,67)+"…":s;};
+function auth(){return S.token?{"Authorization":"Bearer "+S.token}:{};}
+function withTenant(p){return S.tenant?(p+(p.includes("?")?"&":"?")+"tenant="+encodeURIComponent(S.tenant)):p;}
+async function api(p,o={}){const r=await fetch(withTenant(p),{...o,headers:{"Accept":"application/json",...(o.headers||{}),...auth()}});if(r.status===401||r.status===403)throw new Error("AUTH");return r.json();}
 let authPrompted=false;
+function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("show");clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove("show"),2400);}
+function handleErr(e){if(e.message==="AUTH"){if(!authPrompted){authPrompted=true;askToken();}else toast("unauthorized — set a key");}else toast("error: "+e.message);}
+function askToken(){const t=prompt("API key (Bearer token, stk_…). Empty = local/no-key mode.",S.token);authPrompted=false;if(t===null)return;S.token=t.trim();if(S.token)localStorage.setItem("stratum_token",S.token);else localStorage.removeItem("stratum_token");toast("key saved");render();}
 
-async function loadOverview(){
+/* ---------------- nav model (JARVIS rail) ---------------- */
+const PAGES=[
+  {id:"overview",t:"Overview",ic:"◉",grp:"Workspace"},
+  {id:"retrieval",t:"Retrieval",ic:"⌕"},
+  {id:"facts",t:"Facts",ic:"≣"},
+  {id:"entities",t:"Entities",ic:"☰"},
+  {id:"memories",t:"Memories",ic:"▤"},
+  {id:"staging",t:"Staging",ic:"⧉"},
+  {id:"tasks",t:"Task Center",ic:"⊞",grp:"Activity"},
+  {id:"events",t:"Activity Log",ic:"≡"},
+  {id:"ops",t:"Operations",ic:"⚙"},
+];
+let page="overview", counts={};
+function buildNav(){
+  const nav=$("#nav");nav.innerHTML="";
+  let last="";
+  for(const p of PAGES){
+    if(p.grp&&p.grp!==last){const g=document.createElement("div");g.className="grp";g.textContent=p.grp;nav.appendChild(g);last=p.grp;}
+    const b=document.createElement("button");b.dataset.p=p.id;
+    b.innerHTML=`<span class="ic">${p.ic}</span><span class="tx">${p.t}</span>${p.id==="facts"?'<span class="k" id="k-facts">–</span>':p.id==="memories"?'<span class="k" id="k-mem">–</span>':p.id==="staging"?'<span class="k" id="k-stg">–</span>':""}`;
+    b.onclick=()=>show(p.id);nav.appendChild(b);
+  }
+}
+function buildPages(){
+  const host=$("#pages");
+  host.innerHTML=`
+  <section class="page on" id="pg-overview"><div class="ov" id="ov"></div></section>
+  <section class="page" id="pg-retrieval"><div class="sect" id="ov2-retr"></div></section>
+  <section class="page" id="pg-facts"><div class="sect" id="ov2-facts"></div></section>
+  <section class="page" id="pg-entities"><div class="sect" id="ov2-ent"></div></section>
+  <section class="page" id="pg-memories"><div class="sect" id="ov2-mem"></div></section>
+  <section class="page" id="pg-staging"><div class="sect" id="ov2-stg"></div></section>
+  <section class="page" id="pg-tasks"><div class="sect" id="ov2-tasks"></div></section>
+  <section class="page" id="pg-events"><div class="sect" id="ov2-ev"></div></section>
+  <section class="page" id="pg-ops"><div class="sect" id="ov2-ops"></div></section>`;
+}
+function show(id){page=id;
+  $$("#nav button").forEach(b=>{const on=b.dataset.p===id;if(on)b.setAttribute("aria-current","page");else b.removeAttribute("aria-current");});
+  $$(".page").forEach(s=>s.classList.toggle("on",s.id==="pg-"+id));
+  $("#pagetitle").textContent=(PAGES.find(p=>p.id===id)||{t:id}).t;
+  $("#rail").classList.remove("open");
+  const el=$(("#ov2-"+id.slice(0,4)) );
+  ({retrieval:renderRetrieval,facts:renderFacts,entities:renderEntities,memories:renderMemories,staging:renderStaging,tasks:renderTasks,events:renderEvents,ops:renderOps,overview:render}[id]||render)();
+}
+
+/* ---------------- overview ---------------- */
+async function render(){
+  const ov=$("#ov");ov.innerHTML='<div class="empty">Loading…</div>';
   try{
-    const d=await api("dashboard/api/overview");const h=d.health||{},c=d.counts||{};
+    const d=await api("dashboard/api/overview");const h=d.health||{},c=d.counts||{};counts=c;
     const ok=h.status==="ok";
     $("#hdot").className="dot "+(ok?"ok":"bad");$("#hstatus").textContent=ok?"healthy":(h.status||"degraded");
-    $("#hstatus").parentElement.title=JSON.stringify(h);
     $("#hqueue").textContent="queue "+num(c.jobs);
-    $("#hacct").textContent=state.tenant;$("#hav").textContent=(state.tenant||"d").slice(0,1).toUpperCase();
-    $("#hacctsub").textContent="Account";
-    $("#n-facts").textContent=num(c.facts);$("#n-staging").textContent=num(c.staging_pending);
-    $("#hometenant").textContent=state.tenant;
-    const kpis=[["Files",c.files,"Memory documents"],["Chunks",c.chunks,"Embedded passages"],["Facts",c.facts,"Bi-temporal"],["Entities",c.entities,"Graph nodes"],["Staging",c.staging_pending,"Awaiting curator"],["Events",c.events,"Journal rows"]];
-    $("#kpis").innerHTML=kpis.map(([l,n,d2],i)=>`<div class="kpi ${i===2?'amber':''}"><div class="n">${num(n)}</div><div class="l">${l}</div><div class="d">${d2}</div></div>`).join("");
-    renderEvents($("#recent"),d.recent_events);
-  }catch(e){handleErr(e);}
+    const kf=$("#k-facts"),km=$("#k-mem"),ks=$("#k-stg");
+    if(kf)kf.textContent=num(c.facts);if(km)km.textContent=num(c.files);if(ks)ks.textContent=num(c.staging_pending);
+    const cards=[
+      ["Files",c.files,"memory documents"],["Chunks",c.chunks,"embedded passages"],
+      ["Facts",c.facts,"bi-temporal"],["Entities",c.entities,"graph nodes"],
+      ["Staging",c.staging_pending,"awaiting curator"],["Events",c.events,"journal rows"],
+    ];
+    ov.innerHTML=`
+      <div class="ov-hello"><div><h1 id="ov-greet">Stratum</h1><div class="sub" id="ov-sub"></div></div>
+        <button class="act" id="ov-refresh">Refresh</button></div>
+      <form class="ov-ask" id="ov-ask"><input id="ov-asktext" autocomplete="off" placeholder="Search the store — opens in Retrieval."><button class="act go" type="submit">Go</button></form>
+      <div class="ov-cards">${cards.map(([k,v,dd])=>`<button class="ov-card" data-go="${k.toLowerCase()}"><div class="k">${k}</div><div class="v">${num(v)}</div><div class="d">${dd}</div></button>`).join("")}</div>
+      <div class="ov-two">
+        <div class="tile"><div class="tile-h">Recent activity <small id="ov-actn"></small></div><div class="tile-b" id="ov-recent"></div></div>
+        <div class="tile"><div class="tile-h">Store <small>this tenant</small></div><div class="tile-b" id="ov-store"></div></div>
+      </div>
+      <div class="ov-wide ov-two">
+        <div class="tile"><div class="tile-h">Memory areas <small>by bereich</small></div><div class="tile-b" id="ov-areas"></div></div>
+        <div class="ov-side">
+          <div class="tile"><div class="tile-h">Health</div><div class="tile-b" id="ov-health"></div></div>
+          <div class="tile"><div class="tile-h">Endpoints</div><div class="tile-b" id="ov-endpoints"></div></div>
+        </div>
+      </div>`;
+    $("#ov-sub").textContent=new Date().toLocaleDateString(undefined,{weekday:"long",day:"numeric",month:"long",year:"numeric"})+" · tenant "+S.tenant;
+    $("#ov-refresh").onclick=render;
+    $("#ov-ask").onsubmit=e=>{e.preventDefault();const q=$("#ov-asktext").value.trim();if(q){$("#dockq").value=q;show("retrieval");doSearch();}};
+    $$(".ov-card").forEach(b=>b.onclick=()=>{const g=b.dataset.go;if(g==="files"||g==="chunks")show("memories");else if(g==="facts")show("facts");else if(g==="entities")show("entities");else if(g==="staging")show("staging");else show("events");});
+    renderRecent(d.recent_events);
+    $("#ov-store").innerHTML=kvList([["Files",c.files],["Chunks",c.chunks],["Facts",c.facts],["Entities",c.entities],["Staging",c.staging_pending],["Jobs",c.jobs]]);
+    $("#ov-health").innerHTML=kvList([["status",h.status||"?"],["db",h.db?"ok":"down"],["git",h.git?"ok":"off"],["llm",h.llm?"ok":"off"],["queued",c.jobs]]);
+    endpointsInto($("#ov-endpoints"));
+    loadAreas();
+  }catch(e){
+    if(e.message==="AUTH"){ov.innerHTML='<div class="empty">Set an API key to load data — <b class="clickable" id="ov-key">enter key</b></div>';const k=$("#ov-key");if(k)k.onclick=askToken;return;}
+    ov.innerHTML=`<div class="err">${esc(e.message)}</div>`;
+  }
+}
+function kvList(pairs){return pairs.map(([k,v])=>`<div class="kv"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("");}
+function renderRecent(rows){
+  const el=$("#ov-recent");if(!el)return;
+  if(!rows||!rows.length){el.innerHTML='<div class="mini">No events yet.</div>';return;}
+  $("#ov-actn").textContent=rows.length+" recent";
+  el.innerHTML=rows.map(r=>`<div class="kv"><span><span class="tag ${opClass(r.op)}">${esc(r.op)}</span> <span class="mono dim">${esc(short(r.target_uri||""))}</span></span><b class="faint">${esc((r.created_at||"").slice(11,19))}</b></div>`).join("");
 }
 function opClass(op){return op==="ADD"?"ok":op==="FORGET"||op==="DELETE"?"bad":op==="UPDATE"||op==="PROMOTE"?"amber":"cyan";}
-function renderEvents(host,rows){
-  if(!rows||!rows.length){host.innerHTML='<div class="empty">No events yet.</div>';return;}
-  host.innerHTML='<div class="tw"><table><thead><tr><th>op</th><th>target</th><th>when</th></tr></thead><tbody>'+
-    rows.map(r=>`<tr class="row"><td><span class="tag ${opClass(r.op)}">${esc(r.op)}</span></td><td class="mono dim">${esc(r.target_uri||"")}</td><td class="faint mono">${esc(r.created_at||"")}</td></tr>`).join("")+"</tbody></table></div>";
-}
+async function loadAreas(){try{const d=await api("dashboard/api/areas");const a=d.areas||[];const el=$("#ov-areas");if(!el)return;if(!a.length){el.innerHTML='<div class="mini">No files yet.</div>';return;}el.innerHTML=kvList(a.map(x=>[x.area||"(root)",x.n]));}catch(e){}}
+function endpointsInto(el){const b=location.origin;el.innerHTML=kvList([["/mcp",b+"/mcp"],["/health",b+"/health"],["/metrics",b+"/metrics"],["/dashboard",b+"/dashboard"]]);}
 
+/* ---------------- sub pages ---------------- */
+function renderRetrieval(){
+  $("#ov2-retr").innerHTML=`
+    <div><h1>Retrieval</h1><div class="sub">Hybrid search across memories, bi-temporal facts and KV.</div></div>
+    <div class="bar"><input type="search" id="q" placeholder="query…" autocomplete="off">
+      <select id="qmode"><option>hybrid</option><option>vector</option><option>graph</option><option>kv</option></select>
+      <select id="qlevel"><option>l0</option><option selected>l1</option><option>l2</option></select>
+      <input id="qk" type="number" value="8" min="1" max="50" style="width:74px">
+      <button class="act go" id="doq">Search</button></div>
+    <div class="tile"><div class="tile-b" id="qres"><div class="empty">Enter a query.</div></div></div>`;
+  $("#doq").onclick=doSearch;$("#q").addEventListener("keydown",e=>{if(e.key==="Enter")doSearch();});
+}
 async function doSearch(){
-  const q=$("#q").value.trim();if(!q)return;
-  $("#qres").innerHTML='<div class="empty">Searching…</div>';
-  try{
-    const d=await api(`dashboard/api/search?q=${encodeURIComponent(q)}&mode=${$("#qmode").value}&level=${$("#qlevel").value}&k=${$("#qk").value}`);
+  const q=$("#q").value.trim();if(!q)return;$("#qres").innerHTML='<div class="empty">Searching…</div>';
+  try{const d=await api(`dashboard/api/search?q=${encodeURIComponent(q)}&mode=${$("#qmode").value}&level=${$("#qlevel").value}&k=${$("#qk").value}`);
     if(d.error){$("#qres").innerHTML=`<div class="err">${esc(d.error)}</div>`;return;}
-    const rows=d.results||[];
-    if(!rows.length){$("#qres").innerHTML='<div class="empty">No matches.</div>';return;}
-    $("#qres").innerHTML=rows.map(r=>`<div style="padding:11px 0;border-bottom:1px solid var(--line)">
-        <div><span class="tag cyan mono">${fmtNum(r.score)}</span>
-        <span class="mono dim clickable" data-open="${esc(r.uri)}">${esc(r.uri)}</span></div>
-        <div style="margin-top:6px">${esc((r.content||"").slice(0,340))}</div></div>`).join("");
+    const rows=d.results||[];if(!rows.length){$("#qres").innerHTML='<div class="empty">No matches.</div>';return;}
+    $("#qres").innerHTML=rows.map(r=>`<div style="padding:10px 0;border-bottom:1px solid var(--line)"><div><span class="tag cyan mono">${fmtNum(r.score)}</span> <span class="mono dim clickable" data-open="${esc(r.uri)}">${esc(short(r.uri))}</span></div><div style="margin-top:5px">${esc((r.content||"").slice(0,320))}</div></div>`).join("");
   }catch(e){handleErr(e);}
 }
-
+function renderFacts(){
+  $("#ov2-facts").innerHTML=`
+    <div><h1>Facts</h1><div class="sub">Bi-temporal facts — validity window (world time) and transaction window (system time).</div></div>
+    <div class="ov-cards" id="factkpis"></div>
+    <div class="bar"><input id="fsubj" placeholder="subject contains…"><input id="fpred" placeholder="predicate contains…"><button class="act" id="dofacts">Filter</button></div>
+    <div class="tile"><div class="tile-b" id="facts"><div class="empty">Loading…</div></div></div>`;
+  $("#dofacts").onclick=loadFacts;$("#fsubj").addEventListener("keydown",e=>{if(e.key==="Enter")loadFacts();});$("#fpred").addEventListener("keydown",e=>{if(e.key==="Enter")loadFacts();});
+  loadFacts();
+}
 async function loadFacts(){
   $("#facts").innerHTML='<div class="empty">Loading…</div>';
-  try{
-    const p=new URLSearchParams();
-    if($("#fsubj").value.trim())p.set("subject",$("#fsubj").value.trim());
-    if($("#fpred").value.trim())p.set("predicate",$("#fpred").value.trim());
-    const d=await api("dashboard/api/facts?"+p.toString());
-    const s=d.summary||{};
-    $("#factkpis").innerHTML=[["Total facts",s.total],["Open facts",s.open],["Subjects",s.subjects]]
-      .map(([l,n])=>`<div class="kpi"><div class="n">${num(n)}</div><div class="l">${l}</div></div>`).join("");
-    const rows=d.items||[];
-    if(!rows.length){$("#facts").innerHTML='<div class="empty">No facts.</div>';return;}
+  try{const p=new URLSearchParams();if($("#fsubj").value.trim())p.set("subject",$("#fsubj").value.trim());if($("#fpred").value.trim())p.set("predicate",$("#fpred").value.trim());
+    const d=await api("dashboard/api/facts?"+p);const s=d.summary||{};
+    $("#factkpis").innerHTML=[["Total facts",s.total],["Open facts",s.open],["Subjects",s.subjects]].map(([k,v])=>`<div class="ov-card" style="cursor:default"><div class="k">${k}</div><div class="v">${num(v)}</div></div>`).join("");
+    const rows=d.items||[];if(!rows.length){$("#facts").innerHTML='<div class="empty">No facts.</div>';return;}
     $("#facts").innerHTML='<div class="tw"><table><thead><tr><th>subject</th><th>predicate</th><th>object</th><th>valid</th><th>status</th></tr></thead><tbody>'+
-      rows.map(r=>`<tr class="row"><td>${esc(r.subject||"—")}</td><td class="mono dim">${esc(r.predicate)}</td>
-        <td>${esc(short(r.object_text||""))}</td>
-        <td class="faint mono">${esc((r.valid_from||"").slice(0,10))} → ${r.valid_to?esc(String(r.valid_to).slice(0,10)):"open"}</td>
-        <td>${r.is_open?'<span class="tag ok">open</span>':'<span class="tag">closed</span>'}</td></tr>`).join("")+"</tbody></table></div>";
+      rows.map(r=>`<tr class="row"><td>${esc(r.subject||"—")}</td><td class="mono dim">${esc(r.predicate)}</td><td>${esc(short(r.object_text||""))}</td>
+      <td class="faint mono">${esc((r.valid_from||"").slice(0,10))} → ${r.valid_to?esc(String(r.valid_to).slice(0,10)):"open"}</td>
+      <td>${r.is_open?'<span class="tag ok">open</span>':'<span class="tag">closed</span>'}</td></tr>`).join("")+"</tbody></table></div>";
   }catch(e){handleErr(e);}
 }
-
+function renderEntities(){
+  $("#ov2-ent").innerHTML=`<div><h1>Entities</h1><div class="sub">Subjects and objects in the graph, with their fact counts.</div></div>
+    <div class="bar"><input id="entq" placeholder="name contains…"><button class="act" id="doents">Filter</button></div>
+    <div class="tile"><div class="tile-b" id="entities"><div class="empty">Loading…</div></div></div>`;
+  $("#doents").onclick=loadEntities;$("#entq").addEventListener("keydown",e=>{if(e.key==="Enter")loadEntities();});loadEntities();
+}
 async function loadEntities(){
   $("#entities").innerHTML='<div class="empty">Loading…</div>';
-  try{
-    const q=$("#entq").value.trim();
-    const d=await api("dashboard/api/entities"+(q?"?q="+encodeURIComponent(q):""));
-    const rows=d.items||[];
+  try{const q=$("#entq").value.trim();const d=await api("dashboard/api/entities"+(q?"?q="+encodeURIComponent(q):""));const rows=d.items||[];
     if(!rows.length){$("#entities").innerHTML='<div class="empty">No entities.</div>';return;}
     $("#entities").innerHTML='<div class="tw"><table><thead><tr><th>name</th><th>type</th><th>facts</th><th>uri</th></tr></thead><tbody>'+
-      rows.map(r=>`<tr class="row"><td>${esc(r.name)}</td><td class="dim">${esc(r.type||"")}</td>
-        <td class="mono">${num(r.fact_count)}</td><td class="mono faint clickable" data-open="${esc(r.canonical_uri||"")}">${esc(short(r.canonical_uri||""))}</td></tr>`).join("")+"</tbody></table></div>";
+      rows.map(r=>`<tr class="row"><td>${esc(r.name)}</td><td class="dim">${esc(r.type||"")}</td><td class="mono">${num(r.fact_count)}</td>
+      <td class="mono faint clickable" data-open="${esc(r.canonical_uri||"")}">${esc(short(r.canonical_uri||""))}</td></tr>`).join("")+"</tbody></table></div>";
   }catch(e){handleErr(e);}
 }
-
+function renderMemories(){
+  $("#ov2-mem").innerHTML=`<div><h1>Memories</h1><div class="sub">Memory files by area. Open a URI to read it at L0 / L1 / L2.</div></div>
+    <div class="bar"><input id="prefix" placeholder="uri prefix (optional)" style="flex:1"><button class="act" id="dobrowse">Load</button></div>
+    <div class="tile"><div class="tile-b" id="browse"><div class="empty">Load a prefix.</div></div></div>
+    <div class="tile" id="reader-panel" style="display:none"><div class="tile-h" id="reader-title">Document</div><div class="tile-b">
+      <div class="bar"><button data-lvl="l0">L0</button><button data-lvl="l1">L1</button><button data-lvl="l2">L2</button></div>
+      <pre id="reader"></pre></div></div>`;
+  $("#dobrowse").onclick=doBrowse;$("#prefix").addEventListener("keydown",e=>{if(e.key==="Enter")doBrowse();});
+  $$("#reader-panel [data-lvl]").forEach(b=>b.onclick=()=>{if(current)openUri(current,b.dataset.lvl);});
+  doBrowse();
+}
+let current=null;
 async function doBrowse(){
   $("#browse").innerHTML='<div class="empty">Loading…</div>';
-  try{
-    const p=$("#prefix").value.trim();
-    const d=await api(`dashboard/api/list?limit=100${p?"&prefix="+encodeURIComponent(p):""}`);
-    const rows=d.items||[];
+  try{const p=$("#prefix").value.trim();const d=await api(`dashboard/api/list?limit=100${p?"&prefix="+encodeURIComponent(p):""}`);const rows=d.items||[];
     if(!rows.length){$("#browse").innerHTML='<div class="empty">Nothing found.</div>';return;}
     $("#browse").innerHTML='<div class="tw"><table><thead><tr><th>uri</th><th>L0</th><th>size</th><th>updated</th></tr></thead><tbody>'+
-      rows.map(r=>`<tr class="row"><td class="mono dim clickable" data-open="${esc(r.uri)}">${esc(short(r.uri))}</td>
-        <td>${esc((r.l0||"").slice(0,90))}</td><td class="mono faint">${num(r.size_bytes)}</td>
-        <td class="faint mono">${esc(r.updated_at||"")}</td></tr>`).join("")+"</tbody></table></div>";
+      rows.map(r=>`<tr class="row"><td class="mono dim clickable" data-open="${esc(r.uri)}">${esc(short(r.uri))}</td><td>${esc((r.l0||"").slice(0,90))}</td>
+      <td class="mono faint">${num(r.size_bytes)}</td><td class="faint mono">${esc(r.updated_at||"")}</td></tr>`).join("")+"</tbody></table></div>";
   }catch(e){handleErr(e);}
 }
-
-async function loadAreas(){
-  try{
-    const d=await api("dashboard/api/areas");const areas=d.areas||[];
-    $("#n-areas").textContent=num(areas.length);
-  }catch(e){/* the badge stays at its placeholder on failure */}
-}
-
-let current=null;
 async function openUri(uri,level="l1"){
-  if(!uri)return;
-  current=uri;$("#reader-panel").style.display="";$("#reader-title").textContent=uri;
-  $$("#reader-tabs button").forEach(b=>b.classList.toggle("active",b.dataset.lvl===level));
-  $("#reader").textContent="Loading…";
-  try{
-    const d=await api(`dashboard/api/get?uri=${encodeURIComponent(uri)}&level=${level}`);
+  if(!uri)return;current=uri;$("#reader-panel").style.display="";$("#reader-title").textContent=uri;$("#reader").textContent="Loading…";
+  try{const d=await api(`dashboard/api/get?uri=${encodeURIComponent(uri)}&level=${level}`);
     if(d.error){$("#reader").textContent=d.error;return;}
-    if(d.kind==="file"){$("#reader").textContent=d.content||"(empty)";}
-    else if(d.kind==="facts"){$("#reader").textContent=(d.facts||[]).map(f=>`${f.subject||"?"} · ${f.predicate} → ${f.object_text||""}  [${f.valid_from||""} .. ${f.valid_to||"open"}]`).join("\n");}
-    else{$("#reader").textContent=JSON.stringify(d,null,2);}
+    if(d.kind==="file")$("#reader").textContent=d.content||"(empty)";
+    else if(d.kind==="facts")$("#reader").textContent=(d.facts||[]).map(f=>`${f.subject||"?"} · ${f.predicate} → ${f.object_text||""}  [${f.valid_from||""} .. ${f.valid_to||"open"}]`).join("\n");
+    else $("#reader").textContent=JSON.stringify(d,null,2);
   }catch(e){handleErr(e);}
 }
-
+function renderStaging(){
+  $("#ov2-stg").innerHTML=`<div><h1>Staging</h1><div class="sub">Candidates awaiting promotion through the Curator gate (7 criteria).</div></div>
+    <div class="bar"><select id="ststatus"><option>pending</option><option>approved</option><option>rejected</option></select><button class="act" id="dostage">Load</button></div>
+    <div class="tile"><div class="tile-b" id="staging"><div class="empty">Loading…</div></div></div>`;
+  $("#dostage").onclick=doStaging;$("#ststatus").onchange=doStaging;doStaging();
+}
 async function doStaging(){
   $("#staging").innerHTML='<div class="empty">Loading…</div>';
-  try{
-    const s=$("#ststatus").value;
-    const d=await api(`dashboard/api/staging?status=${s}&limit=100`);
-    const rows=d.items||[];
+  try{const s=$("#ststatus").value;const d=await api(`dashboard/api/staging?status=${s}&limit=100`);const rows=d.items||[];
     if(!rows.length){$("#staging").innerHTML='<div class="empty">No candidates.</div>';return;}
     $("#staging").innerHTML='<div class="tw"><table><thead><tr><th>kind</th><th>source</th><th>conf</th><th>created</th>'+(s==="pending"?"<th></th>":"<th>reason</th>")+'</tr></thead><tbody>'+
-      rows.map(r=>`<tr class="row"><td><span class="tag amber">${esc(r.kind)}</span></td>
-        <td class="mono dim">${esc(short(r.source_uri||""))}</td><td class="mono">${fmtNum(r.confidence)}</td>
-        <td class="faint mono">${esc(r.created_at||"")}</td>
-        ${s==="pending"?`<td><button data-promote="${esc(r.candidate_id)}">promote</button></td>`:`<td class="dim">${esc(r.reason||"")}</td>`}</tr>`).join("")+"</tbody></table></div>";
+      rows.map(r=>`<tr class="row"><td><span class="tag amber">${esc(r.kind)}</span></td><td class="mono dim">${esc(short(r.source_uri||""))}</td>
+      <td class="mono">${fmtNum(r.confidence)}</td><td class="faint mono">${esc(r.created_at||"")}</td>
+      ${s==="pending"?`<td><button class="act" data-promote="${esc(r.candidate_id)}">promote</button></td>`:`<td class="dim">${esc(r.reason||"")}</td>`}</tr>`).join("")+"</tbody></table></div>";
   }catch(e){handleErr(e);}
 }
-async function doPromote(id){
-  try{const d=await api("dashboard/api/promote",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({candidate_id:id})});
-    toast(d.error?("error: "+d.error):"promoted");doStaging();}catch(e){handleErr(e);}
+async function doPromote(id){try{const d=await api("dashboard/api/promote",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({candidate_id:id})});toast(d.error?("error: "+d.error):"promoted");doStaging();}catch(e){handleErr(e);}}
+function renderTasks(){
+  $("#ov2-tasks").innerHTML=`<div><h1>Task Center</h1><div class="sub">The job queue (ingest / curate / reflect), claimed with SKIP LOCKED.</div></div><div class="tile"><div class="tile-b" id="tasks"><div class="empty">Loading…</div></div></div>`;
+  loadTasks();
 }
-
 async function loadTasks(){
-  $("#tasks").innerHTML='<div class="empty">Loading…</div>';
-  try{
-    const d=await api("dashboard/api/jobs?limit=100");
-    const rows=d.items||[];
+  try{const d=await api("dashboard/api/jobs?limit=100");const rows=d.items||[];
     if(!rows.length){$("#tasks").innerHTML='<div class="empty">No jobs.</div>';return;}
     $("#tasks").innerHTML='<div class="tw"><table><thead><tr><th>kind</th><th>tenant</th><th>status</th><th>attempts</th><th>created</th></tr></thead><tbody>'+
       rows.map(r=>`<tr class="row"><td class="mono">${esc(r.kind)}</td><td class="dim">${esc(r.tenant_id)}</td>
-        <td><span class="tag ${r.status==='done'?'ok':r.status==='failed'?'bad':'cyan'}">${esc(r.status)}</span></td>
-        <td class="mono">${r.attempts}/${r.max_attempts}</td><td class="faint mono">${esc(r.created_at||"")}</td></tr>`).join("")+"</tbody></table></div>";
+      <td><span class="tag ${r.status==='done'?'ok':r.status==='failed'?'bad':'cyan'}">${esc(r.status)}</span></td>
+      <td class="mono">${r.attempts}/${r.max_attempts}</td><td class="faint mono">${esc(r.created_at||"")}</td></tr>`).join("")+"</tbody></table></div>";
   }catch(e){handleErr(e);}
 }
-
+function renderEvents(){
+  $("#ov2-ev").innerHTML=`<div><h1>Activity Log</h1><div class="sub">The append-only journal — one row per write decision.</div></div><div class="tile"><div class="tile-b" id="events"><div class="empty">Loading…</div></div></div>`;
+  loadEvents();
+}
 async function loadEvents(){
-  try{const d=await api("dashboard/api/events?limit=200");renderEvents($("#events"),d.items);
-    if(!(d.items||[]).length)$("#events").innerHTML='<div class="empty">No events.</div>';}catch(e){handleErr(e);}
+  try{const d=await api("dashboard/api/events?limit=200");const rows=d.items||[];
+    if(!rows.length){$("#events").innerHTML='<div class="empty">No events.</div>';return;}
+    $("#events").innerHTML='<div class="tw"><table><thead><tr><th>op</th><th>target</th><th>actor</th><th>when</th></tr></thead><tbody>'+
+      rows.map(r=>`<tr class="row"><td><span class="tag ${opClass(r.op)}">${esc(r.op)}</span></td><td class="mono dim">${esc(short(r.target_uri||""))}</td>
+      <td class="dim">${esc(r.actor||"")}</td><td class="faint mono">${esc(r.created_at||"")}</td></tr>`).join("")+"</tbody></table></div>";
+  }catch(e){handleErr(e);}
 }
+function renderOps(){
+  $("#ov2-ops").innerHTML=`<div><h1>Operations</h1><div class="sub">Maintenance actions and service endpoints.</div></div>
+    <div class="ov-two"><div class="tile"><div class="tile-h">Reflect</div><div class="tile-b"><div class="mini">Enqueue a budgeted reflect run — condenses facts into synthesis candidates (never active writes).</div>
+      <button class="act go" id="doreflect" style="margin-top:10px">Enqueue reflect</button></div></div>
+      <div class="tile"><div class="tile-h">Endpoints</div><div class="tile-b" id="ops-endpoints"></div></div></div>`;
+  endpointsInto($("#ops-endpoints"));$("#doreflect").onclick=doReflect;
+}
+async function doReflect(){try{const d=await api("dashboard/api/reflect",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});toast(d.ok?("reflect job "+String(d.job_id).slice(0,8)):"error: "+(d.error||""));}catch(e){handleErr(e);}}
 
-async function doReflect(){
-  try{const d=await api("dashboard/api/reflect",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
-    toast(d.ok?("reflect job "+String(d.job_id).slice(0,8)):("error: "+(d.error||"")));loadTasks();}catch(e){handleErr(e);}
+/* ---------------- rail quick query ---------------- */
+async function dockQuery(){
+  const q=$("#dockq").value.trim();if(!q)return;$("#dockhits").innerHTML='<div class="mini">…</div>';
+  try{const d=await api(`dashboard/api/search?q=${encodeURIComponent(q)}&mode=hybrid&k=5&level=l0`);const rows=d.results||[];
+    $("#dockhits").innerHTML=rows.length?rows.map(r=>`<button class="clickable" data-open="${esc(r.uri)}" style="display:block;width:100%;text-align:left;padding:5px 6px;border:0;border-radius:5px;background:none;color:var(--ink);font:inherit;font-size:11px" title="${esc(r.uri)}"><b class="mono" style="color:var(--hud-cool)">${fmtNum(r.score)}</b> ${esc(short(r.uri))}</button>`).join(""):'<div class="mini">No matches.</div>';
+  }catch(e){$("#dockhits").innerHTML=`<div class="err">${esc(e.message)}</div>`;}
 }
-
-function endpoints(){const base=location.origin;
-  $("#endpoints").innerHTML='<div class="tw"><table>'+[
-    ["MCP (streamable HTTP)",base+"/mcp"],["Health",base+"/health"],["Metrics",base+"/metrics"],
-    ["Dashboard API",base+"/dashboard/api/overview"]].map(([l,u])=>`<tr><td class="dim">${l}</td><td class="mono clickable" data-href="${u}">${u}</td></tr>`).join("")+"</table></div>";
-}
-
-async function loadTenants(){
-  const sel=$("#htenant");
-  try{
-    const d=await api("dashboard/api/tenants");const items=d.items||[];
-    if(!items.length){sel.innerHTML=`<option>${esc(state.tenant||"default")}</option>`;return;}
-    sel.innerHTML=items.map(t=>`<option value="${esc(t.tenant_id)}"${t.tenant_id===state.tenant?" selected":""}>${esc(t.name||t.tenant_id)}</option>`).join("");
-    if(!items.some(t=>t.tenant_id===state.tenant)){const cur=d.current||items[0].tenant_id;state.tenant=cur;localStorage.setItem("stratum_tenant",cur);sel.value=cur;}
-  }catch(e){sel.innerHTML=`<option>${esc(state.tenant||"default")}</option>`;}
-}
-function switchTenant(v){
-  state.tenant=v||"default";localStorage.setItem("stratum_tenant",state.tenant);
-  $("#browse").dataset.done="";$("#browse").innerHTML='<div class="empty">Load a prefix.</div>';$("#reader-panel").style.display="none";
-  toast("tenant: "+state.tenant);reload();
-}
-
-function handleErr(e){if(e.message==="AUTH"){if(!authPrompted){authPrompted=true;askToken();}else{toast("unauthorized — set an API key");}}else{toast("error: "+e.message);}}
-function askToken(){
-  const t=prompt("API key (Bearer token, stk_…). Leave empty for local/no-key mode.",state.token);
-  authPrompted=false;if(t===null)return;
-  state.token=t.trim();
-  if(state.token)localStorage.setItem("stratum_token",state.token);else localStorage.removeItem("stratum_token");
-  toast("key saved — reloading");reload();
-}
-function reload(){
-  loadOverview();
-  if(view==="events")loadEvents();
-  if(view==="ops")endpoints();
-  if(view==="staging")doStaging();
-  if(view==="memories"){doBrowse();loadAreas();}
-  if(view==="facts")loadFacts();
-  if(view==="entities")loadEntities();
-  if(view==="tasks")loadTasks();
-  if(view==="retrieval"&&$("#q").value.trim())doSearch();
-}
-
-let view="home";
-function show(v){
-  view=v;
-  $$("nav a").forEach(a=>{const on=a.dataset.view===v;a.classList.toggle("active",on);if(on)a.setAttribute("aria-current","page");else a.removeAttribute("aria-current");});
-  $$(".view").forEach(s=>s.classList.toggle("active",s.id==="v-"+v));
-  closeNav();
-  if(v==="events")loadEvents();
-  if(v==="ops")endpoints();
-  if(v==="staging")doStaging();
-  if(v==="facts")loadFacts();
-  if(v==="entities")loadEntities();
-  if(v==="tasks")loadTasks();
-  if(v==="memories"&&!$("#browse").dataset.done){doBrowse();$("#browse").dataset.done="1";}
-}
-function refresh(){reload();}
-function closeNav(){const n=$("#nav");n.classList.remove("open");$("#hamb").setAttribute("aria-expanded","false");}
-function toggleNav(){const open=$("#nav").classList.toggle("open");$("#hamb").setAttribute("aria-expanded",open?"true":"false");}
+async function loadTenants(){const sel=$("#htenant");try{const d=await api("dashboard/api/tenants");const items=d.items||[];
+  if(!items.length){sel.innerHTML=`<option>${esc(S.tenant)}</option>`;return;}
+  sel.innerHTML=items.map(t=>`<option value="${esc(t.tenant_id)}"${t.tenant_id===S.tenant?" selected":""}>${esc(t.name||t.tenant_id)}</option>`).join("");
+  if(!items.some(t=>t.tenant_id===S.tenant)){const c=d.current||items[0].tenant_id;S.tenant=c;localStorage.setItem("stratum_tenant",c);sel.value=c;}
+}catch(e){sel.innerHTML=`<option>${esc(S.tenant)}</option>`;}}
+function switchTenant(v){S.tenant=v||"default";localStorage.setItem("stratum_tenant",S.tenant);toast("tenant: "+S.tenant);render();}
 
 document.addEventListener("click",e=>{
-  const nav=e.target.closest("nav a");if(nav){show(nav.dataset.view);return;}
-  const open=e.target.closest("[data-open]");if(open&&open.dataset.open){openUri(open.dataset.open);show("memories");return;}
+  const open=e.target.closest("[data-open]");if(open&&open.dataset.open){if(page!=="memories")show("memories");openUri(open.dataset.open);return;}
   const pro=e.target.closest("[data-promote]");if(pro){doPromote(pro.dataset.promote);return;}
-  const href=e.target.closest("[data-href]");if(href){window.open(href.dataset.href,"_blank");return;}
-  const tab=e.target.closest("#reader-tabs button");if(tab&&current){openUri(current,tab.dataset.lvl);return;}
 });
-$("#doq").onclick=doSearch;$("#q").addEventListener("keydown",e=>{if(e.key==="Enter")doSearch();});
-$("#dobrowse").onclick=doBrowse;$("#dofacts").onclick=loadFacts;$("#doents").onclick=loadEntities;
-$("#dostage").onclick=doStaging;$("#ststatus").onchange=doStaging;$("#refresh").onclick=refresh;$("#tokenbtn").onclick=askToken;
-$("#doreflect").onclick=doReflect;$("#hamb").onclick=toggleNav;
-$("#prefix").addEventListener("keydown",e=>{if(e.key==="Enter")doBrowse();});
-$("#fsubj").addEventListener("keydown",e=>{if(e.key==="Enter")loadFacts();});
-$("#fpred").addEventListener("keydown",e=>{if(e.key==="Enter")loadFacts();});
-$("#entq").addEventListener("keydown",e=>{if(e.key==="Enter")loadEntities();});
+$("#refresh").onclick=render;$("#keybtn").onclick=askToken;
+$("#hamb").onclick=()=>$("#rail").classList.toggle("open");
 $("#htenant").addEventListener("change",e=>switchTenant(e.target.value));
-document.addEventListener("keydown",e=>{if(e.key==="Escape")closeNav();});
+$("#dockq").addEventListener("keydown",e=>{if(e.key==="Enter")dockQuery();});
 
-loadTenants();loadOverview();setInterval(loadOverview,30000);
+buildNav();buildPages();loadTenants();render();setInterval(render,30000);
 </script>
 </body>
 </html>"""

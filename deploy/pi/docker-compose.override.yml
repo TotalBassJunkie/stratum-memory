@@ -109,6 +109,9 @@ services:
     volumes:
       - ${STRATUM_DATA_ROOT:-/mnt/ssd/stratum}/kb:/var/stratum/kb
       - ./var:/app/var
+      # Local markdown vault for import_vault.py (read-only). Override the host
+      # path with STRATUM_VAULT_PATH in .env. Harmless if the path is empty.
+      - ${STRATUM_VAULT_PATH:-./var}:/vault:ro
     working_dir: /app
     # Uses the image entrypoint (fixes secret perms, drops to `stratum`), then
     # runs the importer with the given args.

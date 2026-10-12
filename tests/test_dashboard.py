@@ -137,6 +137,7 @@ def capture_q(monkeypatch: pytest.MonkeyPatch, rows: Any = None) -> list[tuple[s
 EXPECTED_ROUTES = {
     ("/dashboard", ("GET",)),
     ("/", ("GET",)),
+    ("/dashboard/api/tenants", ("GET",)),
     ("/dashboard/api/overview", ("GET",)),
     ("/dashboard/api/areas", ("GET",)),
     ("/dashboard/api/list", ("GET",)),
@@ -154,14 +155,14 @@ def test_register_dashboard_registers_exactly_the_expected_routes():
     register_dashboard(fake)
     registered = {(r["path"], tuple(r["methods"])) for r in fake.routes}
     assert registered == EXPECTED_ROUTES
-    assert len(fake.routes) == 11
+    assert len(fake.routes) == 12
 
 
 def test_register_dashboard_is_safe_without_callbacks():
     """Both callbacks are optional; registration must not require them."""
     fake = FakeFastMCP()
     register_dashboard(fake, tenant_for=None, ensure_scope=None)
-    assert len(fake.routes) == 11
+    assert len(fake.routes) == 12
 
 
 # --------------------------------------------------------------------------- #
@@ -1213,3 +1214,46 @@ def test_dash_gate_allows_with_scope(monkeypatch: pytest.MonkeyPatch):
     finally:
         server_mod._CURRENT_AUTH.reset(token)
     assert response.status_code == 200
+
+# ------------------------------------------------ tenant switcher (override auth)
+
+def test_tenant_override_allowed_for_admin(monkeypatch: pytest.MonkeyPatch):
+    """An admin key may switch to another tenant via ?tenant=."""
+    pytest.importorskip("mcp")
+    from stratum.auth import AuthContext
+    from stratum.mcp import server as server_mod
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        dashboard, "_list", lambda tenant, prefix, limit: captured.update(tenant=tenant) or []
+    )
+    routes = _dashboard_routes_from_server(monkeypatch, require_key=False)
+    token = server_mod._CURRENT_AUTH.set(
+        AuthContext(tenant="mine", scopes={"read", "admin"})
+    )
+    try:
+        response = call(routes["/dashboard/api/list"], make_request("tenant=other"))
+    finally:
+        server_mod._CURRENT_AUTH.reset(token)
+    assert response.status_code == 200
+    assert captured["tenant"] == "other"
+
+
+def test_tenant_override_denied_for_non_admin(monkeypatch: pytest.MonkeyPatch):
+    """A non-admin key stays scoped to its own tenant even with ?tenant=."""
+    pytest.importorskip("mcp")
+    from stratum.auth import AuthContext
+    from stratum.mcp import server as server_mod
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        dashboard, "_list", lambda tenant, prefix, limit: captured.update(tenant=tenant) or []
+    )
+    routes = _dashboard_routes_from_server(monkeypatch, require_key=False)
+    token = server_mod._CURRENT_AUTH.set(AuthContext(tenant="mine", scopes={"read"}))
+    try:
+        response = call(routes["/dashboard/api/list"], make_request("tenant=other"))
+    finally:
+        server_mod._CURRENT_AUTH.reset(token)
+    assert response.status_code == 200
+    assert captured["tenant"] == "mine"  # NOT escalated to "other"

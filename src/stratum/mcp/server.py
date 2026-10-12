@@ -253,9 +253,21 @@ def build_server(
     # middleware bound, when the gate is on.
     from ..dashboard import register_dashboard  # noqa: PLC0415 - lazy import
 
-    def _dash_tenant(_request: Request) -> str:
+    def _dash_tenant(request: Request) -> str:
+        """Effective tenant for a dashboard request.
+
+        A ``?tenant=`` query parameter selects another tenant, but ONLY an
+        ``admin`` key may switch away from its own tenant; any other caller
+        stays scoped to the tenant its key resolved to (the default tenant in
+        the open local mode). This mirrors the MCP tool tenant rules.
+        """
         auth = _CURRENT_AUTH.get() or ctx.auth
-        return auth.tenant if auth else "default"
+        own = auth.tenant if auth else "default"
+        requested = request.query_params.get("tenant")
+        if not requested or requested == own:
+            return own
+        is_admin = bool(auth and auth.has_scope("admin"))
+        return requested if is_admin else own
 
     def _dash_gate(_request: Request, scope: str) -> Response | None:
         if not _require_api_key():
@@ -265,7 +277,25 @@ def build_server(
             return JSONResponse({"error": "forbidden"}, status_code=403)
         return None
 
-    register_dashboard(mcp, tenant_for=_dash_tenant, ensure_scope=_dash_gate)
+    def _dash_tenants(request: Request) -> list[dict[str, Any]]:
+        from ..dashboard import _tenants  # noqa: PLC0415 - lazy import
+
+        auth = _CURRENT_AUTH.get() or ctx.auth
+        all_items = _tenants()
+        # A non-admin key only ever sees its own tenant in the switcher.
+        if auth and auth.has_scope("admin"):
+            return all_items
+        own = auth.tenant if auth else "default"
+        return [t for t in all_items if t.get("tenant_id") == own] or [
+            {"tenant_id": own, "name": own}
+        ]
+
+    register_dashboard(
+        mcp,
+        tenant_for=_dash_tenant,
+        ensure_scope=_dash_gate,
+        tenants_for=_dash_tenants,
+    )
 
     @mcp.tool()
     async def stratum_write(

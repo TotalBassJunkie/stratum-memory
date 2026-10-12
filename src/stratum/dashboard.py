@@ -247,6 +247,11 @@ def _events(tenant: str, limit: int) -> list[dict[str, Any]]:
     )
 
 
+def _tenants() -> list[dict[str, Any]]:
+    """List selectable tenants (id + display name) for the switcher."""
+    return _q("SELECT tenant_id, name FROM tenants ORDER BY tenant_id")
+
+
 # --------------------------------------------------------------------------- #
 # Route registration
 # --------------------------------------------------------------------------- #
@@ -257,15 +262,20 @@ def register_dashboard(
     *,
     tenant_for: Callable[[Request], str] | None = None,
     ensure_scope: Callable[[Request, str], Response | None] | None = None,
+    tenants_for: Callable[[Request], list[dict[str, Any]]] | None = None,
 ) -> None:
     """Register the dashboard routes on a FastMCP instance.
 
     Args:
         mcp: The ``FastMCP`` server (provides ``custom_route``).
-        tenant_for: Resolves the tenant for a request (from the auth context,
-            defaulting to the ``default`` tenant) for non-admin tools.
+        tenant_for: Resolves the *effective* tenant for a request. The callback
+            owns the ``?tenant=`` override and its authorization (a non-admin
+            key must not switch away from its own tenant), defaulting to the
+            ``default`` tenant.
         ensure_scope: Returns a ``Response`` to short-circuit when the request
             lacks ``scope`` (used when the key gate is on), else ``None``.
+        tenants_for: Optional callback returning the tenants to offer in the
+            switcher (already authorization-filtered by the caller).
     """
 
     def _tenant(request: Request) -> str:
@@ -301,6 +311,19 @@ def register_dashboard(
     @mcp.custom_route("/", methods=["GET"])
     async def _root(_request: Request) -> Response:  # pragma: no cover - redirect
         return HTMLResponse(_DASHBOARD_HTML)
+
+    def _resolve_tenants(request: Request) -> list[dict[str, Any]]:
+        if tenants_for is not None:
+            return tenants_for(request)
+        return _tenants()
+
+    @mcp.custom_route("/dashboard/api/tenants", methods=["GET"])
+    async def _api_tenants(request: Request) -> Response:  # pragma: no cover - io
+        if (deny := _gate(request, "read")) is not None:
+            return deny
+        return _read_route(
+            lambda: {"items": _resolve_tenants(request), "current": _tenant(request)}
+        )
 
     @mcp.custom_route("/dashboard/api/overview", methods=["GET"])
     async def _api_overview(request: Request) -> Response:  # pragma: no cover - io
@@ -487,6 +510,9 @@ _DASHBOARD_HTML = r"""<!doctype html>
   .dot.ok{background:var(--ok)} .dot.bad{background:var(--bad)} .dot.warn{background:var(--warn)}
   .spacer{flex:1}
   .tenant{font-family:var(--mono);color:var(--text)}
+  .tenwrap{gap:6px;padding:3px 6px 3px 11px}
+  .tenwrap select{background:transparent;border:0;padding:2px 4px;margin:0;color:var(--text);font-family:var(--mono);max-width:180px}
+  .tenwrap select:focus-visible{outline:2px solid var(--accent-2);outline-offset:1px;border-radius:4px}
   button,select,input{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);padding:6px 10px}
   button{cursor:pointer;transition:transform .06s ease,border-color .15s ease,background .15s ease}
   button:hover{border-color:#33455f} button:active{transform:translateY(1px)}
@@ -555,7 +581,10 @@ _DASHBOARD_HTML = r"""<!doctype html>
   <header class="topbar">
     <button class="hamb ghost" id="hamb" title="Menu" aria-label="Toggle navigation menu" aria-controls="nav" aria-expanded="false">≡</button>
     <span class="pill" role="status" aria-live="polite"><span class="dot" id="hdot"></span><span id="hstatus">connecting…</span></span>
-    <span class="pill">tenant <span class="tenant" id="htenant">default</span></span>
+    <label class="pill tenwrap" title="Active tenant">
+      <span class="dim">tenant</span>
+      <select id="htenant" aria-label="Active tenant"></select>
+    </label>
     <span class="pill" id="hqueue">queue 0</span>
     <span class="spacer"></span>
     <button class="ghost" id="tokenbtn" title="Set API key">key</button>
@@ -637,8 +666,12 @@ const state={token:localStorage.getItem("stratum_token")||"", tenant:localStorag
 const $=(s,r=document)=>r.querySelector(s);
 const $$=(s,r=document)=>[...r.querySelectorAll(s)];
 function auth(){return state.token?{"Authorization":"Bearer "+state.token}:{};}
+function withTenant(path){
+  if(!state.tenant)return path;
+  return path+(path.includes("?")?"&":"?")+"tenant="+encodeURIComponent(state.tenant);
+}
 async function api(path,opts={}){
-  const res=await fetch(path,{...opts,headers:{"Accept":"application/json",...(opts.headers||{}),...auth()}});
+  const res=await fetch(withTenant(path),{...opts,headers:{"Accept":"application/json",...(opts.headers||{}),...auth()}});
   if(res.status===401||res.status===403){throw new Error("AUTH");}
   return res.json();
 }
@@ -777,6 +810,35 @@ function reload(){
   if(view==="search"&&$("#q").value.trim())doSearch();
 }
 
+async function loadTenants(){
+  const sel=$("#htenant");
+  try{
+    const d=await api("dashboard/api/tenants");
+    const items=d.items||[];
+    if(!items.length){sel.innerHTML=`<option>${esc(state.tenant||"default")}</option>`;return;}
+    sel.innerHTML=items.map(t=>`<option value="${esc(t.tenant_id)}"${t.tenant_id===state.tenant?" selected":""}>${esc(t.name||t.tenant_id)}</option>`).join("");
+    // If the stored tenant is not offered (e.g. not authorized), fall back to
+    // the server-reported current tenant so the header never lies.
+    if(!items.some(t=>t.tenant_id===state.tenant)){
+      const cur=d.current||items[0].tenant_id;
+      state.tenant=cur;localStorage.setItem("stratum_tenant",cur);
+      sel.value=cur;loadOverview();
+    }
+  }catch(e){
+    // AUTH just means the key is missing — the header stays on the local tenant.
+    sel.innerHTML=`<option>${esc(state.tenant||"default")}</option>`;
+  }
+}
+function switchTenant(v){
+  state.tenant=v||"default";
+  localStorage.setItem("stratum_tenant",state.tenant);
+  // Reset per-view caches so nothing shows another tenant's data.
+  $("#browse").dataset.done="";$("#browse").innerHTML='<div class="empty">Load a prefix.</div>';
+  $("#reader-panel").style.display="none";
+  toast("tenant: "+state.tenant);
+  reload();
+}
+
 let view="overview";
 function show(v){view=v;$$("nav a").forEach(a=>{const on=a.dataset.view===v;a.classList.toggle("active",on);if(on)a.setAttribute("aria-current","page");else a.removeAttribute("aria-current");});$$(".view").forEach(s=>s.classList.toggle("active",s.id==="v-"+v));closeNav();
   if(v==="events")loadEvents();if(v==="ops")endpoints();if(v==="staging")doStaging();if(v==="browse"&&!$("#browse").dataset.done){doBrowse();$("#browse").dataset.done="1";}}
@@ -799,8 +861,9 @@ function toggleNav(){const open=$("#nav").classList.toggle("open");$("#hamb").se
 $("#hamb").onclick=toggleNav;
 document.addEventListener("keydown",e=>{if(e.key==="Escape")closeNav();});
 $("#prefix").addEventListener("keydown",e=>{if(e.key==="Enter")doBrowse();});
+$("#htenant").addEventListener("change",e=>switchTenant(e.target.value));
 
-loadOverview();setInterval(loadOverview,30000);
+loadTenants();loadOverview();setInterval(loadOverview,30000);
 </script>
 </body>
 </html>

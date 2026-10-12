@@ -61,6 +61,16 @@ BASE=http://127.0.0.1:8088
 AUTH=(-H "Authorization: Bearer $KEY")   # weglassen, wenn kein Gate
 ```
 
+### `GET /dashboard/api/tenants`
+Die wählbaren Tenants (`items`) und der aktuell wirksame Tenant (`current`). Für
+einen Nicht-Admin-Key enthält `items` nur den eigenen Tenant. Alle übrigen
+Endpunkte akzeptieren einen optionalen `?tenant=<id>`-Parameter (nur mit
+`admin`-Scope wirksam, siehe Tenant-Umschalter unten).
+
+```bash
+curl -s "${AUTH[@]}" "$BASE/dashboard/api/tenants" | jq .
+```
+
 ### `GET /dashboard/api/overview`
 Health, Zähler (files/chunks/facts/entities/events/staging_pending/jobs) und die
 letzten 12 Events.
@@ -147,13 +157,30 @@ curl -s "${AUTH[@]}" -X POST "$BASE/dashboard/api/reflect" \
 Dunkles Instrumenten-Panel. Links eine schmale Navigationsspalte
 (Overview · Search · Browse · Staging · Events · Operations), oben eine
 Kopfleiste mit Logo, Status-Pill (Punkt grün = `healthy`, rot = degraded),
-Tenant-Pill, Queue-Zähler sowie den Buttons `key` und `refresh`. Der
+**Tenant-Dropdown**, Queue-Zähler sowie den Buttons `key` und `refresh`. Der
 Overview-Bereich zeigt eine Reihe von **KPI-Kacheln** (Files, Chunks, Facts,
 Entities, Staging, Events, große Monospace-Zahlen) und darunter die Tabelle
 „Recent activity" mit farbigen Operations-Tags (ADD grün, FORGET/DELETE rot,
 UPDATE/PROMOTE amber, sonst cyan). Browse und Staging zeigen Tabellen in einem
 horizontal scrollbaren Wrapper; ein Klick auf eine URI öffnet den Reader mit
 den Reitern L0/L1/L2. Unten rechts erscheinen Toasts.
+
+### Tenant-Umschalter
+
+Das Dropdown in der Kopfleiste wechselt den aktiven **Tenant** (RLS-Scope). Die
+Auswahl wird in `localStorage` gespeichert und als `?tenant=<id>` an alle
+API-Aufrufe angehängt. **Autorisierung:** Nur ein Key mit dem Scope `admin` darf
+auf einen **fremden** Tenant umschalten; jeder andere Key bleibt auf seinen
+eigenen Tenant beschränkt (der Server ignoriert den `?tenant=`-Parameter
+stillschweigend). Das Dropdown listet für Nicht-Admins nur den eigenen Tenant.
+
+Ein Admin-Key (für den Betreiber):
+
+```bash
+docker compose ... exec -T stratum-core python -c \
+  "from stratum import db; from stratum.auth import create_key; \
+   print(create_key('default', ['read','write','promote','admin'], conn_factory=db.connection)[0])"
+```
 
 ## Troubleshooting
 

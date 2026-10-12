@@ -8,13 +8,23 @@ endpoints are driven directly with a hand-built Starlette ``Request``.
 
 Pinned here:
 
-* ``register_dashboard`` registers exactly the eleven documented routes,
+* ``register_dashboard`` registers exactly the fifteen documented routes,
 * the SQL builders never interpolate user input (``prefix``/``uri``/``status``
   are always ``%s`` parameters; bare table names are allow-listed),
-* ``limit`` clamping for ``_list``/``_staging``/``_events`` (and the defensive
-  ``?limit=`` query parsing that never 500s on garbage),
+* ``limit`` clamping for ``_list``/``_staging``/``_events`` and the newer
+  ``_facts``/``_entities``/``_jobs`` (and the defensive ``?limit=`` query parsing
+  that never 500s on garbage),
 * the ``_overview`` / ``_areas`` / ``_get`` shapes (incl. the not-found fallback
   and the L2 "unavailable" degradation),
+* the ``_facts`` / ``_entities`` / ``_jobs`` SQL builders (tenant predicate
+  always bound, optional ``ILIKE %s ESCAPE`` filters with escaped wildcards, the
+  DB-side ``is_open`` flag) and the ``_facts_summary`` KPI shape (three ints,
+  zero-row and ``Decimal``/``str``-row coercion),
+* B1: ``_jobs`` tenant scoping (``WHERE tenant_id = %s`` when a tenant is given,
+  global only when ``tenant=None``), that ``/jobs`` and ``/overview`` pass the
+  effective request tenant through, and that a non-admin key sees only its own
+  tenant's jobs,
+* B3: ``_get`` level normalisation (``L0``/``l3``/garbage → a valid level),
 * the ``/_tenant`` resolution (auth tenant, default fallback, raising callback),
 * the ``ensure_scope`` gate (403 when the scope is missing, ``None`` when it is
   present) and that the HTML shell stays public,
@@ -38,8 +48,12 @@ from stratum.dashboard import (
     _as_int,
     _count,
     _count_staging_pending,
+    _entities,
     _events,
+    _facts,
+    _facts_summary,
     _get,
+    _jobs,
     _list,
     _overview,
     _staging,
@@ -141,6 +155,9 @@ EXPECTED_ROUTES = {
     ("/dashboard/api/overview", ("GET",)),
     ("/dashboard/api/areas", ("GET",)),
     ("/dashboard/api/list", ("GET",)),
+    ("/dashboard/api/facts", ("GET",)),
+    ("/dashboard/api/entities", ("GET",)),
+    ("/dashboard/api/jobs", ("GET",)),
     ("/dashboard/api/get", ("GET",)),
     ("/dashboard/api/search", ("GET",)),
     ("/dashboard/api/staging", ("GET",)),
@@ -155,14 +172,14 @@ def test_register_dashboard_registers_exactly_the_expected_routes():
     register_dashboard(fake)
     registered = {(r["path"], tuple(r["methods"])) for r in fake.routes}
     assert registered == EXPECTED_ROUTES
-    assert len(fake.routes) == 12
+    assert len(fake.routes) == 15
 
 
 def test_register_dashboard_is_safe_without_callbacks():
     """Both callbacks are optional; registration must not require them."""
     fake = FakeFastMCP()
     register_dashboard(fake, tenant_for=None, ensure_scope=None)
-    assert len(fake.routes) == 12
+    assert len(fake.routes) == 15
 
 
 # --------------------------------------------------------------------------- #
@@ -316,6 +333,437 @@ def test_events_limit_is_clamped(
     assert log[0][1] == ("t1", expected)
 
 
+# --------------------------------------------------------------------------- #
+# _facts — bi-temporal browse (SQL construction / injection safety / clamping)
+# --------------------------------------------------------------------------- #
+
+#: A value that is simultaneously hostile to SQL, to LIKE and to the escape char.
+_HOSTILE = "a%_b\\c'; DROP TABLE facts; --"
+
+
+def test_facts_without_filters_scopes_only_by_tenant(monkeypatch: pytest.MonkeyPatch):
+    """The tenant predicate is always present; unfiltered it is the only one."""
+    log = capture_q(monkeypatch, [])
+    _facts("t1", subject=None, predicate=None, limit=10)
+    sql, params = log[0]
+    assert "WHERE f.tenant_id = %s" in sql
+    assert "ILIKE" not in sql  # no filters → no LIKE predicate at all
+    assert params == ("t1", 10)
+    assert sql.count("%s") == len(params)  # placeholders and params stay in sync
+
+
+def test_facts_subject_adds_one_escaped_like_parameter(monkeypatch: pytest.MonkeyPatch):
+    log = capture_q(monkeypatch, [])
+    _facts("t1", subject=_HOSTILE, predicate=None, limit=10)
+    sql, params = log[0]
+    assert "e.name ILIKE %s ESCAPE '\\'" in sql
+    assert "f.predicate ILIKE" not in sql
+    assert params == ("t1", "a\\%\\_b\\\\c'; DROP TABLE facts; --%", 10)
+    assert _HOSTILE not in sql  # never interpolated
+    assert sql.count("%s") == len(params)
+
+
+def test_facts_predicate_adds_one_escaped_like_parameter(monkeypatch: pytest.MonkeyPatch):
+    log = capture_q(monkeypatch, [])
+    _facts("t1", subject=None, predicate=_HOSTILE, limit=10)
+    sql, params = log[0]
+    assert "f.predicate ILIKE %s ESCAPE '\\'" in sql
+    assert "e.name ILIKE" not in sql
+    assert params == ("t1", "a\\%\\_b\\\\c'; DROP TABLE facts; --%", 10)
+    assert _HOSTILE not in sql
+    assert sql.count("%s") == len(params)
+
+
+def test_facts_both_filters_keep_a_stable_parameter_order(monkeypatch: pytest.MonkeyPatch):
+    """Order is fixed: tenant, subject, predicate, limit — never interleaved."""
+    log = capture_q(monkeypatch, [])
+    _facts("t1", subject="Ada%", predicate="likes_", limit=7)
+    sql, params = log[0]
+    assert "e.name ILIKE %s ESCAPE '\\'" in sql
+    assert "f.predicate ILIKE %s ESCAPE '\\'" in sql
+    assert params == ("t1", "Ada\\%%", "likes\\_%", 7)
+    assert sql.count("%s") == len(params)
+
+
+def test_facts_selects_the_is_open_flag(monkeypatch: pytest.MonkeyPatch):
+    """``is_open`` is computed DB-side from BOTH temporal axes (valid + tx)."""
+    log = capture_q(monkeypatch, [])
+    _facts("t1", subject=None, predicate=None, limit=10)
+    sql = log[0][0]
+    assert "(f.valid_to IS NULL AND f.tx_to IS NULL) AS is_open" in sql
+    assert "FROM facts f LEFT JOIN entities e" in sql
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"), [(0, 1), (-5, 1), (1, 1), (250, 250), (9999, 500)]
+)
+def test_facts_limit_is_clamped(
+    monkeypatch: pytest.MonkeyPatch, requested: int, expected: int
+):
+    log = capture_q(monkeypatch, [])
+    _facts("t1", subject=None, predicate=None, limit=requested)
+    assert log[0][1][-1] == expected
+
+
+@pytest.mark.parametrize("requested", [0, -1, 10_000])
+def test_facts_limit_is_clamped_with_filters_too(
+    monkeypatch: pytest.MonkeyPatch, requested: int
+):
+    """The clamp applies identically when the subject/predicate branches run."""
+    log = capture_q(monkeypatch, [])
+    _facts("t1", subject="s", predicate="p", limit=requested)
+    assert log[0][1][-1] in (1, 500)
+
+
+def test_facts_subject_wildcard_is_neutralised(monkeypatch: pytest.MonkeyPatch):
+    """A ``%`` in the subject must not match everything (B10 escaping)."""
+    log = capture_q(monkeypatch, [])
+    _facts("t1", subject="%", predicate=None, limit=10)
+    sql, params = log[0]
+    assert "ESCAPE" in sql
+    assert params[1] == "\\%%"  # the user's % is escaped; only ours is a wildcard
+
+
+# --------------------------------------------------------------------------- #
+# _entities — graph nodes with fact counts
+# --------------------------------------------------------------------------- #
+
+
+def test_entities_without_query_scopes_only_by_tenant(monkeypatch: pytest.MonkeyPatch):
+    log = capture_q(monkeypatch, [])
+    _entities("t1", q=None, limit=10)
+    sql, params = log[0]
+    assert "FROM entities e WHERE e.tenant_id = %s" in sql
+    assert "ILIKE" not in sql
+    assert params == ("t1", 10)
+    assert sql.count("%s") == len(params)
+
+
+def test_entities_counts_facts_per_entity(monkeypatch: pytest.MonkeyPatch):
+    log = capture_q(monkeypatch, [])
+    _entities("t1", q=None, limit=10)
+    sql = log[0][0]
+    assert "count(*) FROM facts f WHERE f.subject_entity_id = e.entity_id" in sql
+    assert "AS fact_count" in sql
+
+
+def test_entities_query_adds_one_escaped_like_parameter(monkeypatch: pytest.MonkeyPatch):
+    log = capture_q(monkeypatch, [])
+    _entities("t1", q=_HOSTILE, limit=10)
+    sql, params = log[0]
+    assert "e.name ILIKE %s ESCAPE '\\'" in sql
+    assert params == ("t1", "a\\%\\_b\\\\c'; DROP TABLE facts; --%", 10)
+    assert _HOSTILE not in sql
+    assert sql.count("%s") == len(params)
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"), [(0, 1), (-3, 1), (42, 42), (10_000, 500)]
+)
+def test_entities_limit_is_clamped(
+    monkeypatch: pytest.MonkeyPatch, requested: int, expected: int
+):
+    log = capture_q(monkeypatch, [])
+    _entities("t1", q=None, limit=requested)
+    assert log[0][1] == ("t1", expected)
+
+
+def test_entities_limit_is_clamped_with_a_query_too(monkeypatch: pytest.MonkeyPatch):
+    log = capture_q(monkeypatch, [])
+    _entities("t1", q="Ada", limit=0)
+    assert log[0][1] == ("t1", "Ada%", 1)
+
+
+def test_entities_query_wildcard_is_neutralised(monkeypatch: pytest.MonkeyPatch):
+    log = capture_q(monkeypatch, [])
+    _entities("t1", q="a_b%", limit=10)
+    sql, params = log[0]
+    assert "ESCAPE" in sql
+    assert params[1] == "a\\_b\\%%"
+
+
+# --------------------------------------------------------------------------- #
+# _jobs — Task Center queue
+# --------------------------------------------------------------------------- #
+
+
+def test_jobs_reads_the_jobs_table_newest_first(monkeypatch: pytest.MonkeyPatch):
+    log = capture_q(monkeypatch, [])
+    _jobs(10)
+    sql, params = log[0]
+    assert "FROM jobs" in sql
+    assert "ORDER BY created_at DESC" in sql
+    assert params == (10,)
+    assert sql.count("%s") == len(params)
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"), [(0, 1), (-1, 1), (5, 5), (10_000, 500)]
+)
+def test_jobs_limit_is_clamped(
+    monkeypatch: pytest.MonkeyPatch, requested: int, expected: int
+):
+    log = capture_q(monkeypatch, [])
+    _jobs(requested)
+    assert log[0][1] == (expected,)
+
+
+# --------------------------------------------------------------------------- #
+# B1: _jobs tenant scoping
+# --------------------------------------------------------------------------- #
+
+
+def test_jobs_without_tenant_reads_the_global_queue(monkeypatch: pytest.MonkeyPatch):
+    """``tenant=None`` is the only path that reads the global queue."""
+    log = capture_q(monkeypatch, [])
+    _jobs(10)
+    sql, params = log[0]
+    assert "WHERE tenant_id = %s" not in sql
+    assert params == (10,)
+
+
+def test_jobs_with_tenant_adds_a_bound_tenant_predicate(monkeypatch: pytest.MonkeyPatch):
+    """B1: a tenant-scoped read binds ``WHERE tenant_id = %s`` (never interpolated)."""
+    log = capture_q(monkeypatch, [])
+    _jobs(10, tenant="t1")
+    sql, params = log[0]
+    assert "WHERE tenant_id = %s" in sql
+    assert params == ("t1", 10)
+    assert "t1" not in sql  # the tenant is a bound parameter, not SQL text
+    assert sql.count("%s") == len(params)
+
+
+def test_jobs_with_tenant_limit_is_clamped(monkeypatch: pytest.MonkeyPatch):
+    log = capture_q(monkeypatch, [])
+    _jobs(0, tenant="t1")
+    assert log[0][1] == ("t1", 1)
+
+
+# --------------------------------------------------------------------------- #
+# _facts_summary — Home KPI
+# --------------------------------------------------------------------------- #
+
+
+def test_facts_summary_returns_ints(monkeypatch: pytest.MonkeyPatch):
+    log = capture_q(monkeypatch, [{"total": 5, "open": 2, "subjects": 3}])
+    out = _facts_summary("t1")
+    assert out == {"total": 5, "open": 2, "subjects": 3}
+    assert all(isinstance(v, int) for v in out.values())
+    sql, params = log[0]
+    assert "FILTER (WHERE valid_to IS NULL AND tx_to IS NULL) AS open" in sql
+    assert params == ("t1",)
+
+
+def test_facts_summary_with_zero_rows_returns_zero_ints(monkeypatch: pytest.MonkeyPatch):
+    """An empty result set (``_q`` → ``[]``) must still yield three int zeros."""
+    capture_q(monkeypatch, [])
+    out = _facts_summary("t1")
+    assert out == {"total": 0, "open": 0, "subjects": 0}
+    assert all(isinstance(v, int) for v in out.values())
+
+
+def test_facts_summary_coerces_db_numeric_types(monkeypatch: pytest.MonkeyPatch):
+    """Postgres may hand back ``Decimal``/``str``; the KPIs must be plain ints."""
+    from decimal import Decimal
+
+    capture_q(monkeypatch, [{"total": Decimal("7"), "open": "2", "subjects": 1.0}])
+    out = _facts_summary("t1")
+    assert out == {"total": 7, "open": 2, "subjects": 1}
+    assert all(isinstance(v, int) for v in out.values())
+
+
+# --------------------------------------------------------------------------- #
+# New read routes: /facts, /entities, /jobs
+# --------------------------------------------------------------------------- #
+
+
+def test_new_read_routes_are_registered():
+    fake = FakeFastMCP()
+    register_dashboard(fake)
+    for path in ("/dashboard/api/facts", "/dashboard/api/entities", "/dashboard/api/jobs"):
+        assert fake.route(path, "GET")["path"] == path
+
+
+@pytest.mark.parametrize(
+    "path", ["/dashboard/api/facts", "/dashboard/api/entities", "/dashboard/api/jobs"]
+)
+def test_new_read_routes_are_gated(monkeypatch: pytest.MonkeyPatch, path: str):
+    """Every new read route calls the gate before any data access."""
+
+    def explode(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("data helper must not run when the gate denies")
+
+    monkeypatch.setattr(dashboard, "_facts", explode)
+    monkeypatch.setattr(dashboard, "_entities", explode)
+    monkeypatch.setattr(dashboard, "_jobs", explode)
+    fake = FakeFastMCP()
+    register_dashboard(fake, ensure_scope=_deny_gate)
+    response = call(fake.route(path)["endpoint"], make_request(""))
+    assert response.status_code == 403
+
+
+def test_facts_route_returns_items_and_summary(monkeypatch: pytest.MonkeyPatch):
+    seen: dict[str, Any] = {}
+
+    def fake_facts(tenant: str, *, subject: Any, predicate: Any, limit: int) -> list[Any]:
+        seen.update(tenant=tenant, subject=subject, predicate=predicate, limit=limit)
+        return [{"fact_id": "f1", "is_open": True}]
+
+    monkeypatch.setattr(dashboard, "_facts", fake_facts)
+    monkeypatch.setattr(
+        dashboard, "_facts_summary", lambda tenant: {"total": 1, "open": 1, "subjects": 1}
+    )
+    fake = FakeFastMCP()
+    register_dashboard(fake)
+    response = call(
+        fake.route("/dashboard/api/facts")["endpoint"],
+        make_request("subject=Ada&predicate=likes&limit=7"),
+    )
+    assert response.status_code == 200
+    payload = body_of(response)
+    assert payload["items"][0]["fact_id"] == "f1"
+    assert payload["summary"] == {"total": 1, "open": 1, "subjects": 1}
+    assert seen == {"tenant": "default", "subject": "Ada", "predicate": "likes", "limit": 7}
+
+
+def test_facts_route_normalises_blank_filters_to_none(monkeypatch: pytest.MonkeyPatch):
+    """``?subject=`` (empty) must become ``None``, not an empty LIKE filter."""
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        dashboard,
+        "_facts",
+        lambda tenant, *, subject, predicate, limit: seen.update(
+            subject=subject, predicate=predicate
+        )
+        or [],
+    )
+    monkeypatch.setattr(
+        dashboard, "_facts_summary", lambda tenant: {"total": 0, "open": 0, "subjects": 0}
+    )
+    fake = FakeFastMCP()
+    register_dashboard(fake)
+    response = call(
+        fake.route("/dashboard/api/facts")["endpoint"],
+        make_request("subject=&predicate="),
+    )
+    assert response.status_code == 200
+    assert seen == {"subject": None, "predicate": None}
+
+
+def test_facts_route_tolerates_bad_limit(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        dashboard,
+        "_facts",
+        lambda tenant, *, subject, predicate, limit: captured.update(limit=limit) or [],
+    )
+    monkeypatch.setattr(
+        dashboard, "_facts_summary", lambda tenant: {"total": 0, "open": 0, "subjects": 0}
+    )
+    fake = FakeFastMCP()
+    register_dashboard(fake)
+    response = call(
+        fake.route("/dashboard/api/facts")["endpoint"], make_request("limit=abc")
+    )
+    assert response.status_code == 200
+    assert captured["limit"] == 100
+
+
+def test_entities_route_returns_items(monkeypatch: pytest.MonkeyPatch):
+    seen: dict[str, Any] = {}
+
+    def fake_entities(tenant: str, *, q: Any, limit: int) -> list[Any]:
+        seen.update(tenant=tenant, q=q, limit=limit)
+        return [{"entity_id": "e1", "name": "Ada"}]
+
+    monkeypatch.setattr(dashboard, "_entities", fake_entities)
+    fake = FakeFastMCP()
+    register_dashboard(fake)
+    response = call(
+        fake.route("/dashboard/api/entities")["endpoint"], make_request("q=Ada&limit=3")
+    )
+    assert response.status_code == 200
+    payload = body_of(response)
+    assert payload["items"][0]["entity_id"] == "e1"
+    assert seen == {"tenant": "default", "q": "Ada", "limit": 3}
+
+
+def test_entities_route_normalises_blank_q_to_none(monkeypatch: pytest.MonkeyPatch):
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        dashboard,
+        "_entities",
+        lambda tenant, *, q, limit: seen.update(q=q) or [],
+    )
+    fake = FakeFastMCP()
+    register_dashboard(fake)
+    response = call(fake.route("/dashboard/api/entities")["endpoint"], make_request("q="))
+    assert response.status_code == 200
+    assert seen["q"] is None
+
+
+def test_jobs_route_returns_items(monkeypatch: pytest.MonkeyPatch):
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        dashboard,
+        "_jobs",
+        lambda limit, tenant=None: seen.update(limit=limit, tenant=tenant)
+        or [{"job_id": "j1"}],
+    )
+    fake = FakeFastMCP()
+    register_dashboard(fake)
+    response = call(fake.route("/dashboard/api/jobs")["endpoint"], make_request("limit=9"))
+    assert response.status_code == 200
+    assert body_of(response)["items"][0]["job_id"] == "j1"
+    assert seen["limit"] == 9
+    # B1: the route always forwards the effective request tenant.
+    assert seen["tenant"] == "default"
+
+
+def test_jobs_route_passes_the_effective_tenant(monkeypatch: pytest.MonkeyPatch):
+    """B1: ``/jobs`` forwards ``_tenant(request)`` so jobs are never global."""
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        dashboard,
+        "_jobs",
+        lambda limit, tenant=None: seen.update(tenant=tenant) or [],
+    )
+    fake = FakeFastMCP()
+    register_dashboard(fake, tenant_for=lambda request: "tenant-42")
+    response = call(fake.route("/dashboard/api/jobs")["endpoint"], make_request(""))
+    assert response.status_code == 200
+    assert seen["tenant"] == "tenant-42"
+
+
+def test_jobs_route_tolerates_bad_limit(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        dashboard,
+        "_jobs",
+        lambda limit, tenant=None: captured.update(limit=limit) or [],
+    )
+    fake = FakeFastMCP()
+    register_dashboard(fake)
+    response = call(fake.route("/dashboard/api/jobs")["endpoint"], make_request("limit=abc"))
+    assert response.status_code == 200
+    assert captured["limit"] == 100
+
+
+@pytest.mark.parametrize(
+    "path", ["/dashboard/api/facts", "/dashboard/api/entities", "/dashboard/api/jobs"]
+)
+def test_new_read_routes_return_json_500_on_db_error(
+    monkeypatch: pytest.MonkeyPatch, path: str
+):
+    """B3 parity: a DB failure on the new GET routes is a JSON 500, not a crash."""
+    monkeypatch.setattr(dashboard, "_q", _boom_q)
+    fake = FakeFastMCP()
+    register_dashboard(fake)
+    response = call(fake.route(path)["endpoint"], make_request(""))
+    assert response.status_code == 500
+    assert "db down" in body_of(response)["error"]
+
+
 def test_get_parameterises_tenant_and_uri(monkeypatch: pytest.MonkeyPatch):
     log = capture_q(monkeypatch, [])  # both reads return no rows
     result = _get("t1", "stratum://docs/t1/x'; DROP --", "l1")
@@ -382,6 +830,27 @@ def test_overview_degrades_when_health_raises(monkeypatch: pytest.MonkeyPatch):
     assert "db down" in out["health"]["error"]
 
 
+def test_overview_jobs_kpi_is_tenant_scoped(monkeypatch: pytest.MonkeyPatch):
+    """B1: the queue KPI counts only the active tenant's jobs."""
+    import stratum.observability as obs
+
+    monkeypatch.setattr(obs, "health", lambda: {"status": "ok"})
+    log: list[tuple[str, tuple]] = []
+
+    def fake_q(sql: str, params: tuple = ()) -> list[dict[str, Any]]:
+        log.append((sql, tuple(params)))
+        return [{"n": 5}]
+
+    monkeypatch.setattr(dashboard, "_q", fake_q)
+    _overview("t1")
+
+    jobs_sql = [sql for sql, _ in log if "FROM jobs" in sql]
+    assert len(jobs_sql) == 1
+    assert "WHERE tenant_id = %s" in jobs_sql[0]
+    jobs_params = [params for sql, params in log if "FROM jobs" in sql]
+    assert jobs_params[0] == ("t1",)
+
+
 # --------------------------------------------------------------------------- #
 # _get fallbacks
 # --------------------------------------------------------------------------- #
@@ -407,6 +876,68 @@ def test_get_returns_l1_from_the_file_row(monkeypatch: pytest.MonkeyPatch):
     )
     out = _get("t1", "stratum://docs/t1/a", "l1")
     assert out["kind"] == "file"
+    assert out["content"] == "L1"
+
+
+@pytest.mark.parametrize("level", ["l0", "L0", "l1", "L1", "l2", "L2"])
+def test_get_normalises_valid_levels_case_insensitively(
+    monkeypatch: pytest.MonkeyPatch, level: str
+):
+    """B3: the level is lower-cased before use, so ``L0``/``L1``/``L2`` work."""
+    import stratum.filesystem as fs_mod
+
+    monkeypatch.setattr(
+        dashboard,
+        "_q",
+        lambda sql, params=(): [
+            {"uri": "stratum://docs/t1/a", "l0": "L0", "l1": "L1"}
+        ]
+        if "FROM files" in sql
+        else [],
+    )
+
+    class FakeFS:
+        def __init__(self, *_a: Any, **_k: Any) -> None:
+            pass
+
+        def read(self, uri: str, *, level: str = "l1", tenant: str) -> dict[str, Any]:
+            return {"content": "FULL BODY"}
+
+    monkeypatch.setattr(fs_mod, "FilesystemStore", FakeFS)
+    out = _get("t1", "stratum://docs/t1/a", level)
+    expected = {"l0": "L0", "l1": "L1", "l2": "FULL BODY"}[level.lower()]
+    assert out["content"] == expected
+
+
+@pytest.mark.parametrize("level", ["l3", "L3", "bogus", "", "  ", "l1x", "L0 "])
+def test_get_normalises_invalid_levels_to_l1(
+    monkeypatch: pytest.MonkeyPatch, level: str
+):
+    """B3: an unknown level must not silently fall through; it becomes l1."""
+    monkeypatch.setattr(
+        dashboard,
+        "_q",
+        lambda sql, params=(): [
+            {"uri": "stratum://docs/t1/a", "l0": "L0", "l1": "L1"}
+        ]
+        if "FROM files" in sql
+        else [],
+    )
+    out = _get("t1", "stratum://docs/t1/a", level)
+    assert out["content"] == "L1"
+
+
+def test_get_none_level_defaults_to_l1(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        dashboard,
+        "_q",
+        lambda sql, params=(): [
+            {"uri": "stratum://docs/t1/a", "l0": "L0", "l1": "L1"}
+        ]
+        if "FROM files" in sql
+        else [],
+    )
+    out = _get("t1", "stratum://docs/t1/a", None)
     assert out["content"] == "L1"
 
 
@@ -571,6 +1102,23 @@ def test_tenant_falls_back_when_callback_raises(monkeypatch: pytest.MonkeyPatch)
     assert captured["tenant"] == "default"
 
 
+def test_tenant_fallback_is_logged(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    """B4: the fail-open to ``default`` is logged, not silent."""
+    monkeypatch.setattr(
+        dashboard, "_list", lambda tenant, prefix, limit: []
+    )
+
+    def boom(request: Any) -> str:
+        raise RuntimeError("no auth context")
+
+    endpoint = _list_route_with_tenant(boom)
+    with caplog.at_level("WARNING", logger="stratum.dashboard"):
+        call(endpoint, make_request(""))
+    assert any(
+        "tenant resolution failed" in rec.getMessage() for rec in caplog.records
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Gate behaviour (ensure_scope)
 # --------------------------------------------------------------------------- #
@@ -603,8 +1151,9 @@ def test_gate_passes_when_callback_returns_none(monkeypatch: pytest.MonkeyPatch)
 
 @pytest.mark.parametrize(
     "path",
-    ["/dashboard/api/overview", "/dashboard/api/areas", "/dashboard/api/get",
-     "/dashboard/api/search", "/dashboard/api/staging", "/dashboard/api/events"],
+    ["/dashboard/api/tenants", "/dashboard/api/overview", "/dashboard/api/areas",
+     "/dashboard/api/get", "/dashboard/api/search", "/dashboard/api/staging",
+     "/dashboard/api/events"],
 )
 def test_every_read_route_is_gated(
     monkeypatch: pytest.MonkeyPatch, path: str
@@ -614,6 +1163,45 @@ def test_every_read_route_is_gated(
     register_dashboard(fake, ensure_scope=_deny_gate)
     response = call(fake.route(path)["endpoint"], make_request(""))
     assert response.status_code == 403
+
+
+def test_tenants_route_returns_items_and_current(monkeypatch: pytest.MonkeyPatch):
+    """B6: ``/tenants`` returns the switcher items and the active tenant."""
+    rows = [{"tenant_id": "t1", "name": "Tenant One"}]
+    monkeypatch.setattr(dashboard, "_tenants", lambda: rows)
+    fake = FakeFastMCP()
+    register_dashboard(fake, tenant_for=lambda request: "t1")
+    response = call(fake.route("/dashboard/api/tenants")["endpoint"], make_request(""))
+    assert response.status_code == 200
+    payload = body_of(response)
+    assert payload["items"] == rows
+    assert payload["current"] == "t1"
+
+
+def test_tenants_route_prefers_the_tenants_for_callback(monkeypatch: pytest.MonkeyPatch):
+    """A caller-supplied ``tenants_for`` (authorization-filtered) wins."""
+
+    def explode() -> list[dict[str, Any]]:
+        raise AssertionError("_tenants() must not run when tenants_for is given")
+
+    monkeypatch.setattr(dashboard, "_tenants", explode)
+    fake = FakeFastMCP()
+    register_dashboard(
+        fake,
+        tenants_for=lambda request: [{"tenant_id": "mine", "name": "Mine"}],
+    )
+    response = call(fake.route("/dashboard/api/tenants")["endpoint"], make_request(""))
+    assert response.status_code == 200
+    assert body_of(response)["items"] == [{"tenant_id": "mine", "name": "Mine"}]
+
+
+def test_tenants_route_returns_json_500_on_db_error(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(dashboard, "_q", _boom_q)
+    fake = FakeFastMCP()
+    register_dashboard(fake)
+    response = call(fake.route("/dashboard/api/tenants")["endpoint"], make_request(""))
+    assert response.status_code == 500
+    assert "db down" in body_of(response)["error"]
 
 
 @pytest.mark.parametrize("path", ["/dashboard/api/promote", "/dashboard/api/reflect"])
@@ -645,6 +1233,29 @@ def test_html_shell_has_the_core_elements():
     assert 'class="mark"' in html  # the logo SVG
     assert "<svg" in html
     assert 'id="hstatus"' in html
+
+
+def test_html_shell_wires_the_sidebar_badges_and_areas_route():
+    """B2: the staging badge is set and the Memories view loads /areas."""
+    html = dashboard._DASHBOARD_HTML
+    # staging badge is actually populated from the overview counts
+    assert '$("#n-staging").textContent=num(c.staging_pending)' in html
+    # the areas route is used by the client and drives the #n-areas badge
+    assert "dashboard/api/areas" in html
+    assert '$("#n-areas").textContent=num(areas.length)' in html
+    # it is wired into the memories view
+    assert 'if(view==="memories"){doBrowse();loadAreas();}' in html
+
+
+def test_html_shell_escapes_numeric_search_and_staging_values():
+    """B5: score/confidence go through ``fmtNum`` (coerce + escape), never raw."""
+    html = dashboard._DASHBOARD_HTML
+    assert "const fmtNum=" in html
+    assert "${fmtNum(r.score)}" in html
+    assert "${fmtNum(r.confidence)}" in html
+    # the old raw interpolations must be gone
+    assert "${(r.score??0).toFixed?.(3)??r.score}" not in html
+    assert "${(r.confidence??0).toFixed?.(2)??r.confidence}" not in html
 
 
 # --------------------------------------------------------------------------- #
@@ -895,6 +1506,16 @@ def _middleware():
     ["/mcp", "/dashboard/api", "/dashboard/api/overview", "/dashboard/api/promote"],
 )
 def test_middleware_protects_mcp_and_dashboard_api(path: str):
+    mw = _middleware()
+    assert mw._is_protected(path) is True
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/dashboard/api/facts", "/dashboard/api/entities", "/dashboard/api/jobs"],
+)
+def test_middleware_protects_the_new_read_routes(path: str):
+    """The three new API routes live under ``/dashboard/api`` → key-protected."""
     mw = _middleware()
     assert mw._is_protected(path) is True
 
@@ -1257,3 +1878,30 @@ def test_tenant_override_denied_for_non_admin(monkeypatch: pytest.MonkeyPatch):
         server_mod._CURRENT_AUTH.reset(token)
     assert response.status_code == 200
     assert captured["tenant"] == "mine"  # NOT escalated to "other"
+
+
+def test_jobs_route_scopes_a_non_admin_to_its_own_tenant(monkeypatch: pytest.MonkeyPatch):
+    """B1: a non-admin key's ``/jobs`` call is filtered to its own tenant.
+
+    The route forwards ``_tenant(request)``; for a non-admin key that resolver
+    ignores ``?tenant=`` and returns the key's own tenant, so the queue is never
+    global.
+    """
+    pytest.importorskip("mcp")
+    from stratum.auth import AuthContext
+    from stratum.mcp import server as server_mod
+
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        dashboard,
+        "_jobs",
+        lambda limit, tenant=None: seen.update(tenant=tenant) or [],
+    )
+    routes = _dashboard_routes_from_server(monkeypatch, require_key=False)
+    token = server_mod._CURRENT_AUTH.set(AuthContext(tenant="mine", scopes={"read"}))
+    try:
+        response = call(routes["/dashboard/api/jobs"], make_request("tenant=other"))
+    finally:
+        server_mod._CURRENT_AUTH.reset(token)
+    assert response.status_code == 200
+    assert seen["tenant"] == "mine"  # NOT "other" and NOT None (global)

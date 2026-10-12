@@ -79,6 +79,16 @@ letzten 12 Events.
 curl -s "${AUTH[@]}" "$BASE/dashboard/api/overview" | jq .
 ```
 
+### `GET /dashboard/api/facts`
+Bi-temporale Fakten (`?subject=`, `?predicate=`, `?limit=`) plus `summary`
+(`total`/`open`/`subjects`). Stratum-only.
+
+### `GET /dashboard/api/entities`
+Graphknoten (`?q=`, `?limit=`) mit `fact_count`.
+
+### `GET /dashboard/api/jobs`
+Die Job-Queue (tenant-scoped; ein Admin-Key kann per `?tenant=` wählen).
+
 ### `GET /dashboard/api/areas`
 Top-Level-Bereiche (`split_part(uri,'/',3)`) mit Zählern, absteigend.
 
@@ -154,16 +164,26 @@ curl -s "${AUTH[@]}" -X POST "$BASE/dashboard/api/reflect" \
 
 ## Screenshot-Beschreibung
 
-Dunkles Instrumenten-Panel. Links eine schmale Navigationsspalte
-(Overview · Search · Browse · Staging · Events · Operations), oben eine
-Kopfleiste mit Logo, Status-Pill (Punkt grün = `healthy`, rot = degraded),
-**Tenant-Dropdown**, Queue-Zähler sowie den Buttons `key` und `refresh`. Der
-Overview-Bereich zeigt eine Reihe von **KPI-Kacheln** (Files, Chunks, Facts,
-Entities, Staging, Events, große Monospace-Zahlen) und darunter die Tabelle
-„Recent activity" mit farbigen Operations-Tags (ADD grün, FORGET/DELETE rot,
-UPDATE/PROMOTE amber, sonst cyan). Browse und Staging zeigen Tabellen in einem
-horizontal scrollbaren Wrapper; ein Klick auf eine URI öffnet den Reader mit
-den Reitern L0/L1/L2. Unten rechts erscheinen Toasts.
+Dunkles Instrumenten-Panel im Stil von **OpenViking Studio**. Links eine
+**gruppierte Navigationsspalte** — *Workspace* (Home · Retrieval · Facts ·
+Entities · Memories · Staging) und *Activity* (Task Center · Activity Log ·
+Operations) — mit Icons und Live-Zählern (Facts, Memories, Staging). Oben eine
+Kopfleiste mit Logo/Brand, Status-Pill (Punkt grün = `healthy`, rot = degraded),
+**Tenant-Dropdown**, Queue-Zähler, `refresh`/`key`-Buttons und einem
+**Account-Block** (Avatar mit Initiale + aktiver Tenant). Die **Home**-Seite
+zeigt eine Reihe von **KPI-Kacheln** (Files, Chunks, Facts, Entities, Staging,
+Events; große Monospace-Zahlen mit Untertitel) und darunter die Tabelle „Recent
+activity" mit farbigen Operations-Tags (ADD grün, FORGET/DELETE rot,
+UPDATE/PROMOTE amber, sonst cyan).
+
+Weitere Seiten: **Retrieval** (Hybrid-Suche über Memories/Fakten/KV mit
+Mode-/Level-/k-Auswahl), **Facts** (bi-temporale Fakten mit Valid-/Tx-Fenster,
+KPIs + Filter, Stratum-only), **Entities** (Graphknoten mit Fact-Count),
+**Memories** (Dateien nach Prefix, Klick öffnet den L0/L1/L2-Reader),
+**Staging** (Curator-Kandidaten mit `promote`-Button, Stratum-only),
+**Task Center** (Job-Queue mit Status/Attempts), **Activity Log**
+(append-only-Journal), **Operations** (Reflect anstoßen + Service-Endpunkte).
+Tabellen scrollen horizontal in einem Wrapper; unten rechts erscheinen Toasts.
 
 ### Tenant-Umschalter
 

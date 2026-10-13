@@ -161,6 +161,17 @@ class _FakeOV:
         return self.content
 
 
+class _FakeFS:
+    """FilesystemStore double: records write() calls, no I/O."""
+
+    def __init__(self) -> None:
+        self.writes: list[dict] = []
+
+    def write(self, uri, content, *, tenant, metadata=None, commit=True):
+        self.writes.append({"uri": uri, "tenant": tenant})
+        return {"uri": uri, "l0": "", "l1": ""}
+
+
 class _FakePipeline:
     """IngestPipeline double returning a configurable result object."""
 
@@ -188,7 +199,7 @@ async def test_import_one_truncated_is_not_marked_done(importer):
     ov = _FakeOV()
     pipeline = _FakePipeline(truncated=True)
     good, info = await importer._import_one(
-        pipeline, ov, tenant="example", ov_uri="viking://user/example/a/b.md", mode="ecl"
+        pipeline, ov, _FakeFS(), tenant="example", ov_uri="viking://user/example/a/b.md", mode="ecl"
     )
     assert good is False
     assert info.startswith("truncated")
@@ -198,7 +209,7 @@ async def test_import_one_success_is_marked_done(importer):
     ov = _FakeOV()
     pipeline = _FakePipeline(truncated=False)
     good, info = await importer._import_one(
-        pipeline, ov, tenant="example", ov_uri="viking://user/example/a/b.md", mode="ecl"
+        pipeline, ov, _FakeFS(), tenant="example", ov_uri="viking://user/example/a/b.md", mode="ecl"
     )
     assert good is True
     assert "chunks=" in info
@@ -210,7 +221,7 @@ async def test_import_one_empty_content_is_done_without_ingest(importer):
     ov = _FakeOV(content="   \n  ")
     pipeline = _FakePipeline()
     good, info = await importer._import_one(
-        pipeline, ov, tenant="example", ov_uri="viking://user/example/a/b.md", mode="structure"
+        pipeline, ov, _FakeFS(), tenant="example", ov_uri="viking://user/example/a/b.md", mode="structure"
     )
     assert good is True
     assert info == "empty"
@@ -223,7 +234,7 @@ async def test_import_one_bad_uri_returns_failure(importer):
     pipeline = _FakePipeline()
     deep = "/".join(["segment"] * 40)
     good, info = await importer._import_one(
-        pipeline, ov, tenant="example", ov_uri=f"viking://user/example/{deep}", mode="ecl"
+        pipeline, ov, _FakeFS(), tenant="example", ov_uri=f"viking://user/example/{deep}", mode="ecl"
     )
     assert good is False
     assert info.startswith("bad-uri")

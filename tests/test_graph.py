@@ -240,8 +240,6 @@ def test_add_fact_past_valid_to_without_valid_from_uses_valid_to_as_start():
     Regression: promoting a curated fact with ``valid_to="2026-07-25"`` and no
     ``valid_from`` raised CheckViolation on the live store.
     """
-    import datetime
-
     from stratum.graph import normalize_utc
 
     graph, conn = _graph(responses=[None, None, {"fact_id": str(uuid.uuid4())}])

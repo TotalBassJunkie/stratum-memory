@@ -192,8 +192,14 @@ class TemporalGraph:
         """
         if object_text is None and object_entity_id is None:
             raise ValueError("add_fact requires object_text or object_entity_id")
-        vf = normalize_utc(valid_from) or _now()
+        vf = normalize_utc(valid_from)
         vt = normalize_utc(valid_to)
+        # A fact that already ended (``valid_to`` in the past) but has no
+        # ``valid_from`` must not default to ``now()`` — the schema CHECK
+        # ``valid_from <= valid_to`` would reject it. Treat an explicit
+        # ``valid_to`` without a start as a point-in-time fact ending there.
+        if vf is None:
+            vf = vt if vt is not None else _now()
 
         # B6: the closing UPDATE rewrites the predecessor's valid_to to ``vf``.
         # If ``vf`` predates the predecessor's valid_from the CHECK would fail.
@@ -290,8 +296,10 @@ class TemporalGraph:
                 given. Raised before any write.
         """
         new_id = str(uuid.uuid4())
-        vf = normalize_utc(valid_from) or _now()
+        vf = normalize_utc(valid_from)
         vt = normalize_utc(valid_to)
+        if vf is None:
+            vf = vt if vt is not None else _now()
 
         close_sql = """
         UPDATE facts
@@ -434,8 +442,10 @@ class TemporalGraph:
         fact_id: str | None = None,
     ) -> str:
         """Insert a directed, optionally fact-backed edge. Returns ``edge_id``."""
-        vf = normalize_utc(valid_from) or _now()
+        vf = normalize_utc(valid_from)
         vt = normalize_utc(valid_to)
+        if vf is None:
+            vf = vt if vt is not None else _now()
         sql = """
         INSERT INTO edges (tenant_id, src_entity_id, dst_entity_id, rel_type,
                            valid_from, valid_to, fact_id)

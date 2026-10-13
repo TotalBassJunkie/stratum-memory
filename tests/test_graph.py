@@ -233,6 +233,34 @@ def test_add_fact_requires_an_object():
         graph.add_fact("default", subject_entity_id=str(uuid.uuid4()), predicate="p")
 
 
+def test_add_fact_past_valid_to_without_valid_from_uses_valid_to_as_start():
+    """A point-in-time fact (valid_to set, valid_from omitted) must not default
+    valid_from to now() — that violates ``valid_from <= valid_to`` (facts_check).
+
+    Regression: promoting a curated fact with ``valid_to="2026-07-25"`` and no
+    ``valid_from`` raised CheckViolation on the live store.
+    """
+    import datetime
+
+    from stratum.graph import normalize_utc
+
+    graph, conn = _graph(responses=[None, None, {"fact_id": str(uuid.uuid4())}])
+    past = "2026-07-25T00:00:00+00:00"
+    graph.add_fact(
+        "default",
+        subject_entity_id=str(uuid.uuid4()),
+        predicate="has updates until",
+        object_text="2026-07-25",
+        valid_to=past,
+    )
+    insert_sql, params = conn.statements[2]
+    # params order: tenant, subject, predicate, object_text, object_entity_id,
+    # valid_from, valid_to, confidence, ...
+    vf, vt = params[5], params[6]
+    assert vf == normalize_utc(past), "valid_from must equal valid_to, not now()"
+    assert vf <= vt
+
+
 def test_add_fact_uses_configured_vector_type():
     from stratum.config import Settings
 

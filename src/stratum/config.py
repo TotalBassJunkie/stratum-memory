@@ -86,11 +86,15 @@ class Settings(BaseSettings):
         return self.llm_api_key or _read_secret(self.llm_api_key_file)
 
     def resolved_llm_embed_api_key(self) -> str | None:
-        return (
-            self.llm_embed_api_key
-            or _read_secret(self.llm_embed_api_key_file)
-            or self.resolved_llm_api_key()
-        )
+        explicit = self.llm_embed_api_key or _read_secret(self.llm_embed_api_key_file)
+        if explicit:
+            return explicit
+        # Only fall back to the chat key when the embedding endpoint IS the chat
+        # endpoint. A separate embed host (e.g. a local Ollama) must not receive
+        # the chat provider's key.
+        if self.llm_embed_base_url and self.llm_embed_base_url.rstrip("/") != self.llm_base_url.rstrip("/"):
+            return None
+        return self.resolved_llm_api_key()
 
     def dsn(self, owner: bool = False) -> str:
         user = self.db_owner_user if owner else self.db_user

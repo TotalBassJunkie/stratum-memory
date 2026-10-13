@@ -37,6 +37,7 @@ import sys
 import time
 import unicodedata
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -168,6 +169,7 @@ def _save_state(path: Path, done: set[str]) -> None:
 async def _import_one(
     pipeline: IngestPipeline,
     ov: OpenVikingClient,
+    fs: Any,
     *,
     tenant: str,
     ov_uri: str,
@@ -200,6 +202,12 @@ async def _import_one(
         # A truncated run did NOT import the whole file: do not checkpoint it as
         # done, or a re-run would skip the remainder forever (B5).
         return False, f"truncated ({info})"
+    # Index the document in ``files`` (L0/L1 + vault file) so the Memories page
+    # and the L0–L2 reader work; the chunks above already hold the embeddings.
+    try:
+        fs.write(target, content, tenant=tenant, metadata={"title": ov_uri.rsplit("/", 1)[-1]}, commit=False)
+    except Exception as e:  # noqa: BLE001
+        return False, f"index-error: {e}"
     return True, info
 
 
@@ -272,7 +280,7 @@ async def run(args: argparse.Namespace) -> int:
                     skipped += 1
                     continue
                 good, info = await _import_one(
-                    pipeline, ov, tenant=args.tenant, ov_uri=uri, mode=args.mode
+                    pipeline, ov, fs, tenant=args.tenant, ov_uri=uri, mode=args.mode
                 )
                 if good:
                     ok += 1
@@ -302,6 +310,16 @@ async def run(args: argparse.Namespace) -> int:
     finally:
         ov.close()
         _save_state(state_path, done)
+
+    # One commit for the whole batch (per-file writes used commit=False).
+    try:
+        from stratum.filesystem import git_commit
+
+        sha = git_commit(settings.kb_path, f"openviking import: {ok} files ({args.tenant})")
+        if sha:
+            print(f"vault committed: {sha}")
+    except Exception as e:  # noqa: BLE001
+        print(f"WARN: vault commit failed: {e}", file=sys.stderr)
 
     print(
         f"DONE: total={total} ok={ok} failed={failed} skipped={skipped} "

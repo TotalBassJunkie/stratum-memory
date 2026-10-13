@@ -94,11 +94,12 @@ async def run(args: argparse.Namespace) -> int:
         print(f"WARN: could not ensure tenant: {e}", file=sys.stderr)
 
     settings = Settings()
+    fs = FilesystemStore(settings)
     pipeline = IngestPipeline(
         settings,
         llm=LLMClient(settings),
         store=MemoryStore(settings),
-        fs=FilesystemStore(settings),
+        fs=fs,
         graph=TemporalGraph(settings),
     )
 
@@ -145,6 +146,16 @@ async def run(args: argparse.Namespace) -> int:
             failed += 1
             print(f"FAIL(truncated) {f}", file=sys.stderr)
             continue
+        # Index the document in ``files`` (L0/L1 + vault file) so the Memories
+        # page and the L0–L2 reader work. The chunks above already carry the
+        # embeddings, so we only index here — no second embedding pass. A single
+        # git commit at the end keeps the vault cheap (commit=False per file).
+        try:
+            fs.write(uri, content, tenant=args.tenant, metadata={"title": rel.stem}, commit=False)
+        except Exception as e:  # noqa: BLE001
+            failed += 1
+            print(f"FAIL(index) {f}: {e}", file=sys.stderr)
+            continue
         ok += 1
         done.add(key)
         if ok % 50 == 0:
@@ -158,6 +169,15 @@ async def run(args: argparse.Namespace) -> int:
             break
 
     _save_state(state, done)
+    # One commit for the whole batch (each write() ran with commit=False).
+    try:
+        from stratum.filesystem import git_commit
+
+        sha = git_commit(settings.kb_path, f"vault import: {ok} files ({args.tenant})")
+        if sha:
+            print(f"vault committed: {sha}")
+    except Exception as e:  # noqa: BLE001
+        print(f"WARN: vault commit failed: {e}", file=sys.stderr)
     print(f"DONE: total={seen} ok={ok} failed={failed} skipped={skipped} in {time.time()-t0:.0f}s")
     return 1 if failed else 0
 

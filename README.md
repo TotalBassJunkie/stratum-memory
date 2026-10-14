@@ -32,6 +32,11 @@ Apache-2.0.
 Ein Befehl installiert das `stratum`-CLI; den Server-Stack holt danach
 `stratum install` + `stratum up` (braucht Docker):
 
+**Python ≥ 3.12 muss auf dem Host vorhanden sein** — außer bei MSI/EXE: nur die
+Windows-Installer frieren ihre Laufzeit mit PyInstaller ein, jeder andere Kanal
+(`.deb`/`.rpm`, Snap, AppImage, `.pkg`/`.dmg`, Homebrew, curl, npm, pipx, pip)
+startet den System-Interpreter. Kanal für Kanal: `docs/install.md`.
+
 ```bash
 # Linux / macOS
 curl -fsSL https://get.stratum.dev/install.sh | bash

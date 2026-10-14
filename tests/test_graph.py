@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -42,7 +42,7 @@ def _norm(sql: str) -> str:
 class _NullTransaction:
     """Stand-in for ``psycopg.Connection.transaction()`` (a context manager)."""
 
-    def __enter__(self) -> "_NullTransaction":
+    def __enter__(self) -> _NullTransaction:
         return self
 
     def __exit__(self, *exc: object) -> bool:
@@ -70,7 +70,7 @@ class RecordingConnection:
         self.on_execute: Any = None
         self.on_after_execute: Any = None
 
-    def cursor(self) -> "RecordingCursor":
+    def cursor(self) -> RecordingCursor:
         return RecordingCursor(self)
 
     def transaction(self) -> _NullTransaction:
@@ -80,7 +80,7 @@ class RecordingConnection:
     def commit(self) -> None:
         self.commits += 1
 
-    def __enter__(self) -> "RecordingConnection":
+    def __enter__(self) -> RecordingConnection:
         return self
 
     def __exit__(self, *exc: object) -> bool:
@@ -110,7 +110,7 @@ class RecordingCursor:
     def fetchall(self) -> Any:
         return self._last if isinstance(self._last, list) else []
 
-    def __enter__(self) -> "RecordingCursor":
+    def __enter__(self) -> RecordingCursor:
         return self
 
     def __exit__(self, *exc: object) -> bool:
@@ -148,18 +148,18 @@ def test_normalize_utc_none():
 
 def test_normalize_utc_naive_datetime_assumed_utc():
     got = normalize_utc(datetime(2026, 1, 2, 3, 4, 5))
-    assert got == datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    assert got == datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
     assert got.tzinfo is not None
 
 
 def test_normalize_utc_iso_z_suffix():
     got = normalize_utc("2026-01-02T03:04:05Z")
-    assert got == datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    assert got == datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
 
 
 def test_normalize_utc_offset_converted_to_utc():
     got = normalize_utc("2026-01-02T05:04:05+02:00")
-    assert got == datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    assert got == datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
     assert got.utcoffset().total_seconds() == 0
 
 
@@ -224,7 +224,7 @@ def test_add_fact_closes_before_insert():
     assert insert_sql.upper().startswith("INSERT INTO FACTS")
     assert insert_params[3] == "pro"
     # valid_from is the normalised param at index 5
-    assert insert_params[5] == datetime(2026, 1, 1, tzinfo=timezone.utc)
+    assert insert_params[5] == datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def test_add_fact_requires_an_object():
@@ -301,7 +301,7 @@ def test_add_fact_rejects_valid_from_before_open_fact():
 
     def driver(sql: str, _params: tuple) -> Any:
         if _norm(sql).upper().startswith("SELECT"):
-            return {"valid_from": datetime(2026, 6, 1, tzinfo=timezone.utc)}
+            return {"valid_from": datetime(2026, 6, 1, tzinfo=UTC)}
         raise AssertionError("no write may happen after the B6 guard fails")
 
     conn.on_execute = driver  # type: ignore[attr-defined]
@@ -326,7 +326,7 @@ def test_add_fact_allows_valid_from_after_open_fact():
 
     def driver(sql: str, params: tuple) -> Any:
         if _norm(sql).upper().startswith("SELECT"):
-            return {"valid_from": datetime(2026, 1, 1, tzinfo=timezone.utc)}
+            return {"valid_from": datetime(2026, 1, 1, tzinfo=UTC)}
         if _norm(sql).upper().startswith("INSERT"):
             return {"fact_id": "new"}
         return None
@@ -571,7 +571,7 @@ def test_get_facts_as_of_valid_clause():
     assert "(VALID_TO IS NULL OR VALID_TO > %S)" in sql.upper()
     # no implicit "open only" guard when as_of is given
     assert "TX_TO IS NULL" not in sql.upper()
-    instant = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    instant = datetime(2026, 5, 1, tzinfo=UTC)
     assert params.count(instant) == 2  # both sides of the valid-time window
 
 
@@ -582,7 +582,7 @@ def test_get_facts_as_of_tx_clause():
     assert "TX_FROM <= %S" in sql.upper()
     assert "(TX_TO IS NULL OR TX_TO > %S)" in sql.upper()
     assert "VALID_TO IS NULL" not in sql.upper()
-    instant = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    instant = datetime(2026, 5, 1, tzinfo=UTC)
     assert params.count(instant) == 2
 
 
@@ -681,7 +681,7 @@ def test_traverse_as_of_valid_filters_both_terms():
     upper = sql.upper()
     assert upper.count("E.VALID_FROM <= %S") == 2
     assert upper.count("(E.VALID_TO IS NULL OR E.VALID_TO > %S)") == 2
-    instant = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    instant = datetime(2026, 5, 1, tzinfo=UTC)
     assert params.count(instant) == 4
 
 

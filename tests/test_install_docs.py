@@ -9,6 +9,16 @@ package names and release assets):
 * every canonical identifier appears (winget id, GHCR image, PyPI/npm package,
   both short ``get.stratum.dev`` URLs),
 * the channel × OS matrix exists and covers at least five channels per OS,
+* the runtime prerequisite is stated **correctly**: only MSI/EXE (PyInstaller
+  freeze) and Docker are self-contained; ``.deb``/``.rpm``, Snap, AppImage,
+  ``.pkg``/``.dmg``, Homebrew, curl, PowerShell, pipx/pip and npm all need a
+  Python >= 3.12 on the host,
+* the deinstallation table names a real Inno Setup uninstaller (no invented
+  ``/UNINSTALL`` switch),
+* the elevated-rights row includes the ``.pkg`` installer,
+* the winget section admits the one-time ``wingetcreate`` submission,
+* every referenced release asset matches the naming contract of
+  ``docs/distribution.md`` (no invented artifact names),
 * ``README.md`` links to ``docs/install.md`` and carries the three one-liners,
 * neither file leaks a secret.
 
@@ -62,6 +72,48 @@ REQUIRED_CHANNEL_KEYWORDS: tuple[str, ...] = (
 #: The OS columns of the channel matrix.
 OS_HEADERS: tuple[str, ...] = ("Windows", "Linux", "macOS")
 MIN_CHANNELS_PER_OS = 5
+
+#: Every channel of the "Braucht der Kanal ein eigenes Python >= 3.12?" table,
+#: as ``name: (regex that finds the row, required verdict)``. The regex is
+#: matched case-insensitively against the row label (Markdown stripped). Only
+#: MSI/EXE (PyInstaller freeze) and Docker may answer ``nein``.
+RUNTIME_TABLE_EXPECTATIONS: dict[str, tuple[str, str]] = {
+    "deb/rpm": (r"\.deb\s*/\s*\.rpm", "ja"),
+    "Snap": (r"snap", "ja"),
+    "AppImage": (r"appimage", "ja"),
+    "pkg/dmg": (r"\.pkg\s*/\s*\.dmg", "ja"),
+    "Homebrew": (r"homebrew", "ja"),
+    "curl/install.sh": (r"curl\s*/\s*install\.sh", "ja"),
+    "PowerShell/install.ps1": (r"powershell\s*/\s*install\.ps1", "ja"),
+    "pipx/pip": (r"pipx\s*/\s*pip", "ja"),
+    "npm": (r"^npm$", "ja"),
+    "MSI": (r"^msi$", "nein"),
+    "EXE": (r"^exe\b", "nein"),
+    "Docker": (r"^docker$", "nein"),
+}
+
+#: Release assets named in ``docs/install.md``; every ``Stratum-<version>-…``
+#: / ``stratum_<version>…`` / ``stratum-<version>…`` token in the file must match
+#: one of these, i.e. must not invent an artifact name.
+CONTRACT_ASSET_SUFFIXES: tuple[str, ...] = (
+    "x64.msi",
+    "setup.exe",
+    "x86_64.pkg",
+    "x86_64.dmg",
+    "x86_64.AppImage",
+    "_amd64.deb",
+    "-1.x86_64.rpm",
+)
+
+#: Version placeholders the guide uses inside an asset name.
+_VERSION_TOKEN = r"(?:<version>|\d+\.\d+\.\d+)"
+_ASSET_RE = re.compile(
+    rf"(?:Stratum-|stratum[_-]){_VERSION_TOKEN}"
+    r"(?:[A-Za-z0-9._-]*\.(?:msi|exe|pkg|dmg|AppImage|deb|rpm|snap))?"
+)
+
+#: A table row: the leading label and the remaining cells.
+_TABLE_ROW_RE = re.compile(r"^\|\s*(?P<label>[^|]+?)\s*\|(?P<rest>.*)\|\s*$")
 
 
 # ============================================================ fixtures
@@ -157,6 +209,193 @@ def test_install_doc_has_a_deinstallation_section(install_text: str) -> None:
         assert snippet in install_text, f"deinstallation is missing {snippet!r}"
 
 
+# ============================================== markdown section / table helpers
+
+
+def _section(install_text: str, heading: str) -> str:
+    """Return the body of the ``## <heading>`` section (up to the next ``## ``)."""
+    match = re.search(rf"^##\s+{re.escape(heading)}\s*$", install_text, re.MULTILINE)
+    assert match, f"no '## {heading}' section in docs/install.md"
+    rest = install_text[match.end() :]
+    nxt = re.search(r"^##\s", rest, re.MULTILINE)
+    return rest[: nxt.start()] if nxt else rest
+
+
+def _table_row(section_text: str, keyword: str) -> str:
+    """Return the first table row whose *label* cell contains ``keyword``."""
+    for line in section_text.splitlines():
+        match = _TABLE_ROW_RE.match(line.strip())
+        if match and keyword.lower() in match.group("label").lower():
+            return line
+    raise AssertionError(f"no table row labelled like {keyword!r}")
+
+
+def _python_runtime_table(install_text: str) -> dict[str, str]:
+    """Parse the "Braucht der Kanal ein eigenes Python >= 3.12?" table.
+
+    Returns ``{label: "ja"|"nein"}``; the label is lowercased and stripped of
+    Markdown noise (backticks, bold markers, collapsed whitespace) so lookups do
+    not depend on cosmetic formatting.
+    """
+    rows: dict[str, str] = {}
+    for line in install_text.splitlines():
+        match = _TABLE_ROW_RE.match(line.strip())
+        if not match:
+            continue
+        cells = [cell.strip() for cell in match.group("rest").split("|")]
+        if len(cells) < 2:
+            continue
+        verdict = cells[0].strip().strip("*").strip().lower()
+        if verdict not in ("ja", "nein"):
+            continue
+        label = re.sub(r"[`*\s]+", " ", match.group("label")).strip().lower()
+        rows[label] = verdict
+    return rows
+
+
+# ============================================== runtime prerequisite (finding 1)
+
+
+def test_prerequisites_do_not_claim_the_native_installers_bundle_python(
+    install_text: str,
+) -> None:
+    """The guide must not repeat the old "every native installer is self-contained"."""
+    for pattern in (
+        # "Die nativen Installer … bringen ihre eigene Laufzeit mit."
+        r"(?:nativen|native|alle)\s+Installer[^.\n]{0,140}(?:eigene\s+Laufzeit|Laufzeit\s+mit)",
+        # "… .deb/.rpm, Snap, AppImage … bringen ihre eigene Laufzeit mit."
+        r"(?:\.deb|\.rpm|Snap|AppImage|\.pkg|\.dmg|Homebrew)[^.\n]{0,140}"
+        r"bring(?:en|t)\s+ihre\s+eigene\s+Laufzeit\s+mit",
+    ):
+        match = re.search(pattern, install_text)
+        assert match is None, (
+            "docs/install.md still claims the native packages ship their own "
+            f"runtime: {match.group(0)!r}"
+        )
+
+
+def test_prerequisites_row_does_not_limit_python_to_pipx_and_npm(install_text: str) -> None:
+    """Python is needed by every channel but MSI/EXE/Docker, not only pipx/npm."""
+    row = _table_row(_section(install_text, "Voraussetzungen"), "Python")
+    assert re.search(r"(?i)nur\s+für", row) is None, (
+        f"the Python prerequisite must not be limited to a few channels: {row!r}"
+    )
+    for channel in ("MSI", "EXE", "Docker"):
+        assert channel in row, f"the Python prerequisite row must name {channel} as the exception"
+
+
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    list(RUNTIME_TABLE_EXPECTATIONS.values()),
+    ids=list(RUNTIME_TABLE_EXPECTATIONS),
+)
+def test_runtime_python_table_maps_every_channel_correctly(
+    install_text: str, pattern: str, expected: str
+) -> None:
+    rows = _python_runtime_table(install_text)
+    matches = [label for label in rows if re.search(pattern, label, re.IGNORECASE)]
+    assert matches, f"the runtime table has no row for {pattern!r}"
+    for label in matches:
+        assert rows[label] == expected, (
+            f"{label!r} is marked {rows[label]!r} but must be {expected!r} "
+            "(only MSI/EXE/Docker ship their own runtime)"
+        )
+
+
+def test_runtime_python_table_has_no_undocumented_rows(install_text: str) -> None:
+    """Every row of the runtime table must be a channel this contract knows."""
+    rows = _python_runtime_table(install_text)
+    assert rows, "the 'Braucht der Kanal ein eigenes Python >= 3.12?' table is missing"
+    unknown = [
+        label
+        for label in rows
+        if not any(
+            re.search(pattern, label, re.IGNORECASE)
+            for pattern, _ in RUNTIME_TABLE_EXPECTATIONS.values()
+        )
+    ]
+    assert not unknown, f"runtime table rows without an expectation: {unknown}"
+
+
+def test_runtime_section_names_the_concrete_symptoms(install_text: str) -> None:
+    """Ubuntu 22.04 (Python 3.10) must be the worked example, with both symptoms."""
+    section = _section(install_text, "Voraussetzungen")
+    assert "Ubuntu 22.04" in section
+    assert "3.10" in section
+    assert re.search(r"Depends:\s*python3\s*\(>=\s*3\.12\)", section), (
+        "the .deb dependency failure is not shown"
+    )
+    assert "ModuleNotFoundError" in section, "the AppImage import failure is not shown"
+
+
+def test_elevated_rights_row_includes_the_pkg_installer(install_text: str) -> None:
+    """The .pkg runs as root (postinstall writes /usr/local/bin/stratum)."""
+    row = _table_row(_section(install_text, "Voraussetzungen"), "sudo")
+    for channel in (".deb", ".rpm", "Snap", ".pkg", "MSI", "EXE"):
+        assert channel in row, f"the elevated-rights row must name {channel}"
+    assert "root" in row, "the elevated-rights row must explain why the .pkg needs root"
+
+
+def test_pkg_sections_document_the_root_install(install_text: str) -> None:
+    """`sudo installer -pkg …` is the real command; the payload is /usr/local/lib/stratum."""
+    macos = _section(install_text, "macOS (Apple)")
+    assert "sudo installer -pkg" in macos
+    assert "/usr/local/lib/stratum" in macos or "/usr/local/bin/stratum" in macos
+
+
+# ============================================== Inno Setup uninstall (finding 2)
+
+
+def test_deinstallation_does_not_invent_an_inno_uninstall_switch(install_text: str) -> None:
+    """Inno Setup has no `/UNINSTALL` switch — it would just re-run Setup."""
+    assert "/UNINSTALL" not in install_text, (
+        "docs/install.md documents a non-existent Inno Setup switch"
+    )
+
+
+def test_inno_uninstall_names_the_real_uninstaller(install_text: str) -> None:
+    row = _table_row(_section(install_text, "Deinstallation"), "EXE")
+    assert "Apps & Features" in row, "the GUI path is missing"
+    assert re.search(r"unins\d+\.exe", row), (
+        "the documented uninstaller must be the unins000.exe placed by Inno Setup"
+    )
+    assert "%LOCALAPPDATA%\\Programs\\Stratum" in row, "the default install directory is missing"
+    assert "/VERYSILENT" in row, "the silent flag for the uninstaller is missing"
+
+
+# ============================================== winget submission (finding 4)
+
+
+def test_winget_section_documents_the_one_time_submission(install_text: str) -> None:
+    """`winget install` only works after the package landed in microsoft/winget-pkgs."""
+    windows = _section(install_text, "Windows")
+    start = windows.index("### 1. winget")
+    end = windows.index("### 2.")
+    winget = windows[start:end]
+
+    assert "wingetcreate" in winget, "the one-time submission tool is not named"
+    assert "microsoft/winget-pkgs" in winget, "the community repository is not named"
+    assert re.search(r"(?i)nicht\s+automatisierbar", winget), (
+        "the guide must admit the submission is a manual, one-time step"
+    )
+    assert "No package found" in winget, "the symptom before the submission is not shown"
+    for alternative in ("MSI", "EXE", "Scoop", "npm", "PowerShell"):
+        assert alternative in winget, f"the winget hint must point at the {alternative} fallback"
+
+
+# ============================================== asset names (naming contract)
+
+
+def test_install_doc_only_names_contract_artifacts(install_text: str) -> None:
+    """Every release asset named here must exist in docs/distribution.md."""
+    assets = {match.group(0) for match in _ASSET_RE.finditer(install_text)}
+    assert assets, "no release asset is named in docs/install.md"
+    invented = sorted(asset for asset in assets if not asset.endswith(CONTRACT_ASSET_SUFFIXES))
+    assert not invented, (
+        f"artifact names outside the docs/distribution.md contract: {invented}"
+    )
+
+
 # ============================================================ channel × OS matrix
 
 
@@ -222,6 +461,17 @@ def test_readme_has_an_installation_section(readme_text: str) -> None:
 def test_readme_has_the_three_one_liners(readme_text: str) -> None:
     for one_liner in (CURL_ONE_LINER, PS_ONE_LINER, PIPX_ONE_LINER):
         assert one_liner in readme_text, f"README.md is missing the one-liner {one_liner!r}"
+
+
+def test_readme_states_the_python_prerequisite(readme_text: str) -> None:
+    """The install section must not imply that only pipx needs Python."""
+    section = readme_text[
+        readme_text.index("## Installation") : readme_text.index("## Architecture at a glance")
+    ]
+    assert "3.12" in section, "the README install section omits the Python >= 3.12 requirement"
+    assert re.search(r"(?i)MSI", section) and re.search(r"(?i)EXE", section), (
+        "the README must name MSI/EXE as the self-contained exception"
+    )
 
 
 # ============================================================ secrets

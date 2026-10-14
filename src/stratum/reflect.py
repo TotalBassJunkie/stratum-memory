@@ -60,7 +60,7 @@ import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from psycopg.types.json import Jsonb
@@ -215,7 +215,7 @@ def _as_utc(value: Any) -> datetime | None:
         except ValueError:
             return None
     if isinstance(value, datetime):
-        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
     return None
 
 
@@ -417,7 +417,7 @@ class ReflectWorker:
         self._graph = graph
         self._curator = curator
         self._connect: Callable[[str], Any] = conn_factory or db.connection
-        self._clock: Clock = clock or (lambda: datetime.now(timezone.utc))
+        self._clock: Clock = clock or (lambda: datetime.now(UTC))
         self._record_synthesis = bool(record_synthesis)
         self._timeout_seconds = (
             float(REFLECT_TIMEOUT_SECONDS) if timeout_seconds is None else float(timeout_seconds)

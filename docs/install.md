@@ -33,11 +33,51 @@ Danach in **jedem** Fall derselbe Ablauf: `stratum install` → `stratum up` →
 
 | Was | Wofür | Details |
 |---|---|---|
-| **Python ≥ 3.12** | nur für die Wege `pipx`, `pip` und den `npm`-Wrapper | Die nativen Installer (MSI/EXE, .deb/.rpm, .pkg/.dmg, AppImage, Snap, Homebrew, curl) bringen ihre eigene Laufzeit mit. |
+| **Python ≥ 3.12** | für **alle** Kanäle **außer** MSI, EXE und Docker | Nur die PyInstaller-Installer (MSI/EXE) und das Container-Image bringen ihre eigene Laufzeit mit. Jeder andere Kanal startet den **System-Interpreter** — auch `.deb`/`.rpm`, Snap, AppImage und `.pkg`/`.dmg`. Die Zuordnung Kanal für Kanal steht in der Tabelle direkt darunter. |
 | **Docker** (Engine bzw. Docker Desktop) | für den Server-Stack (`stratum install`, `up`, `down`, `status`, `logs`) | Diese Unterbefehle rufen `docker compose` auf. Ohne Docker läuft nur das CLI (z. B. `stratum version`, `stratum doctor`, `stratum mcp` gegen eine **bereits** erreichbare Datenbank). |
 | **PostgreSQL 18 + pgvector** | für die Datenhaltung | **Nicht** selbst installieren: `stratum install` schreibt eine `docker-compose.yml`, die Postgres mitbringt. Nur wer den MCP-Server gegen eine fremde DB betreibt, braucht sie separat (`STRATUM_DB_*`). |
 | **Netzwerk** | Download der Release-Artefakte bzw. des Container-Images | `ghcr.io` (Image) und `github.com`/`get.stratum.dev` (Assets, Skripte). |
-| **Kein `sudo`/Admin nötig** | `pipx`, `npm` und der `curl`-Einzeiler unter Linux/macOS | Diese Wege installieren in das Benutzerverzeichnis (`~/.local/bin` bzw. den npm-Prefix). Nur `.deb`/`.rpm`/Snap/MSI/EXE brauchen erhöhte Rechte. |
+| **Kein `sudo`/Admin nötig** | `pipx`, `npm` und der `curl`-Einzeiler unter Linux/macOS | Diese Wege installieren in das Benutzerverzeichnis (`~/.local/bin` bzw. den npm-Prefix). Nur `.deb`/`.rpm`/Snap/`.pkg`/MSI/EXE brauchen erhöhte Rechte — das `.pkg` läuft als root (`sudo installer -pkg …`), weil sein `postinstall` den Symlink `/usr/local/bin/stratum` anlegt. |
+
+### Braucht der Kanal ein eigenes Python ≥ 3.12?
+
+Die native Verpackung ist **kein** Python-Freeze: `.deb`/`.rpm`, Snap, AppImage,
+`.pkg`/`.dmg`, Homebrew und die beiden Skript-Installer legen nur das
+`stratum`-Kommando ab und starten es mit dem **Interpreter des Hosts**. Nur MSI
+und EXE frieren den Interpreter mit PyInstaller ein.
+
+| Kanal | Braucht Python ≥ 3.12? | Warum |
+|---|:---:|---|
+| `.deb` / `.rpm` | **ja** | Das Paket deklariert `depends: python3 (>= 3.12)` (`packaging/linux/nfpm.yaml`); `/usr/bin/stratum` ist ein POSIX-sh-Launcher, der `python3 -m stratum.cli` startet. |
+| Snap | **ja** | `stage-packages: python3` — den Interpreter bringt die Snap-Base mit, nicht das CLI-Payload; gestartet wird er über denselben Launcher wie im `.deb`. |
+| AppImage | **ja** | Das Image bündelt nur das Wheel; `AppRun` ruft den Launcher auf, der `python3` vom Host sucht. |
+| `.pkg` / `.dmg` | **ja** | `postinstall` und der macOS-Launcher nutzen das System-`python3` („Python 3.12 or newer" steht in den Installer-Hinweisen). |
+| Homebrew (`brew`) | **ja** | Die Formel hängt an `python@3.12` (`depends_on "python@3.12"`). |
+| curl / `install.sh` | **ja** | Das Skript sucht `python3`/`python` ≥ 3.12 und bricht sonst mit Exit-Code 1 ab. |
+| PowerShell / `install.ps1` | **ja** | Ebenso: ohne Python ≥ 3.12 endet das Skript mit Exit-Code 1. |
+| pipx / pip | **ja** | `pipx install stratum-memory` baut die venv auf dem System-Python auf. |
+| npm | **ja** | Der Wrapper startet das CLI über das System-Python. |
+| MSI | **nein** | PyInstaller-Freeze: `stratum.exe` enthält Interpreter und Stdlib, das MSI bringt eine eigene Laufzeit mit. |
+| EXE (Inno Setup) | **nein** | Derselbe PyInstaller-Freeze wie im MSI — der Setup.exe-Installer bringt eine eigene Laufzeit mit. |
+| Docker | **nein** | Das Image `ghcr.io/totalbassjunkie/stratum-memory` enthält Python und das Paket. |
+
+**Konkretes Symptom (z. B. Ubuntu 22.04, System-Python 3.10):**
+
+```bash
+# .deb: apt lehnt die Installation wegen der deklarierten Abhängigkeit ab.
+sudo apt install ./stratum_<version>_amd64.deb
+# → stratum-memory : Depends: python3 (>= 3.12) but 3.10.x is to be installed
+
+# AppImage: der Launcher findet zwar python3, aber das Paket ist dort nicht
+# installiert — der Start endet im Import-Fehler.
+./Stratum-<version>-x86_64.AppImage version
+# → ModuleNotFoundError: No module named 'stratum'
+```
+
+Auf einem solchen Host zuerst ein Python ≥ 3.12 bereitstellen (`brew install
+python@3.12` unter macOS; unter Ubuntu 22.04 etwa der `deadsnakes`-PPA oder ein
+Upgrade auf 24.04) — oder auf einen Kanal ausweichen, der keinen
+System-Interpreter braucht: **MSI/EXE** (Windows) bzw. **Docker**.
 
 Prüfen, ob alles da ist:
 
@@ -76,11 +116,20 @@ stratum mcp              # MCP-Server (stdio / streamable-http)
 
 ## Windows
 
-### 1. winget (empfohlen)
+### 1. winget (empfohlen, sobald das Paket im Community-Repo liegt)
 
 ```powershell
 winget install TotalBassJunkie.StratumMemory
 ```
+
+> **Ehrlicher Hinweis:** Das Manifest liegt im Repository
+> (`packaging/winget/`), ist aber **noch nicht** in `microsoft/winget-pkgs`
+> eingereicht. Solange das Paket nicht im Community-Repo ist, schlägt der Befehl
+> oben fehl („No package found matching input criteria"). Der Erstupload ist ein
+> einmaliger, **nicht automatisierbarer** Schritt (`wingetcreate new` öffnet den
+> PR von Hand); danach findet winget das Paket. Bis dahin diesen Kanal
+> überspringen und **MSI/EXE** (Abschnitt 6), **Scoop** (2), **npm** (3) oder den
+> **PowerShell-Einzeiler** (5) nutzen.
 
 ### 2. Scoop
 
@@ -236,6 +285,12 @@ Im Finder genügt ein Doppelklick auf `Stratum-<version>-x86_64.pkg` und dann
 sudo installer -pkg Stratum-<version>-x86_64.pkg -target /
 ```
 
+Der `.pkg`-Installer läuft als **root** (`rootVolumeOnly="true"`): sein
+`postinstall`-Skript legt den Symlink `/usr/local/bin/stratum` auf den
+Launcher `/usr/local/lib/stratum/bin/stratum` an. Er braucht deshalb — anders
+als pipx, npm und der `curl`-Einzeiler — erhöhte Rechte und ein
+**System-Python ≥ 3.12**; das `.pkg` bringt keinen eigenen Interpreter mit.
+
 ### 4. .dmg (Drag & Drop in „Programme")
 
 ```bash
@@ -245,7 +300,9 @@ open Stratum-<version>-x86_64.dmg      # Image öffnen
 
 Im geöffneten Fenster das Symbol **Stratum** auf den Ordner **Programme** ziehen,
 danach das Image auswerfen. Der Einzeiler in `Programme/Stratum` ist danach
-aufrufbar.
+aufrufbar. Das `.dmg` enthält **dasselbe `.pkg`** und ruft damit denselben
+root-Installer auf — es braucht also ebenfalls erhöhte Rechte und ein
+**System-Python ≥ 3.12**.
 
 ### 5. pipx / pip
 
@@ -311,19 +368,19 @@ CNAME zeigt.
 
 | Kanal | Befehl |
 |---|---|
-| winget | `winget uninstall TotalBassJunkie.StratumMemory` |
+| winget | `winget uninstall TotalBassJunkie.StratumMemory` (nur wenn der Kanal verfügbar war — siehe [Windows → 1. winget](#1-winget-empfohlen-sobald-das-paket-im-community-repo-liegt)) |
 | Scoop | `scoop uninstall stratum-memory` |
 | npm | `npm uninstall -g stratum-memory` |
 | Chocolatey | `choco uninstall stratum-memory` |
 | PowerShell-Einzeiler | `stratum` aus dem Benutzer-`PATH` entfernen (das Skript legt eine `stratum.exe`/`stratum.ps1` im Benutzerverzeichnis ab) und den Ordner löschen |
 | MSI | `msiexec /x Stratum-<version>-x64.msi /qn` — oder „Apps & Features" → Stratum-Memory → Deinstallieren |
-| EXE | „Apps & Features" → Stratum-Memory → Deinstallieren, oder `Stratum-<version>-setup.exe /VERYSILENT /UNINSTALL` |
+| EXE | „Apps & Features" → Stratum-Memory → Deinstallieren. Oder still per Kommandozeile: `"%LOCALAPPDATA%\Programs\Stratum\unins000.exe" /VERYSILENT` — das Uninstall-Programm (`unins000.exe`) liegt im Installationsverzeichnis, standardmäßig `%LOCALAPPDATA%\Programs\Stratum` (bei einer Installation mit `/ALLUSERS`: `%ProgramFiles%\Stratum`). |
 | .deb | `sudo apt remove stratum-memory` (bzw. `sudo dpkg -r stratum-memory`) |
 | .rpm | `sudo dnf remove stratum-memory` (bzw. `sudo rpm -e stratum-memory`) |
 | AppImage | Datei `Stratum-<version>-x86_64.AppImage` löschen |
 | Snap | `sudo snap remove stratum-memory` |
 | Homebrew | `brew uninstall stratum-memory` |
-| .pkg | `sudo rm -rf /usr/local/bin/stratum` bzw. den Installer-Eintrag in `/var/db/receipts/` entfernen |
+| .pkg | `sudo rm -rf /usr/local/bin/stratum` (der Symlink) **und** `sudo rm -rf /usr/local/lib/stratum` (die Nutzlast), bzw. den Empfangs-Eintrag unter `/var/db/receipts/` entfernen |
 | .dmg | `Stratum` aus `Programme` in den Papierkorb ziehen |
 | pipx | `pipx uninstall stratum-memory` |
 | pip | `python -m pip uninstall stratum-memory` |

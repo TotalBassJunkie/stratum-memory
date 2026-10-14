@@ -34,6 +34,8 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -99,6 +101,9 @@ SECRET_PATTERNS = (
     re.compile(r"npm_[A-Za-z0-9]{20,}"),
     re.compile(r"pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_\-]+"),
 )
+
+#: The nuspec XML namespace, for reading the Chocolatey `<file>` globs.
+NUSPEC_NS = {"n": "http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd"}
 
 try:  # PyYAML is a dev extra; the YAML tests skip when it is absent.
     import yaml
@@ -339,6 +344,12 @@ def test_release_rewrites_the_manifest_placeholders() -> None:
     ):
         assert manifest.split("/")[-1] in body, f"the rewriter must handle {manifest}"
     assert "sha256" in body.lower(), "the rewriter must substitute checksums"
+    # The Chocolatey script moved into tools/ (the nuspec globs tools\**).
+    assert 'tools" / "chocolateyinstall.ps1' in body, (
+        "the rewriter must write packaging/chocolatey/tools/chocolateyinstall.ps1"
+    )
+    # The stale-URL guard must run before the tree is uploaded.
+    assert "ReleaseNotesUrl" in body, "the rewriter must refresh the winget release notes URL"
 
 
 def test_release_attaches_the_assets_to_the_github_release() -> None:
@@ -356,6 +367,210 @@ def test_release_job_needs_every_build_job() -> None:
     needs = set(_needs(_job(_load(RELEASE), "release")))
     missing = set(BUILD_JOBS) - needs
     assert not missing, f"the release job must depend on every build job; missing {sorted(missing)}"
+
+
+# ==================================================== manifest hand-off (BLOCKER)
+#
+# The rewriter runs in the `release` job's workspace only. Every publish job does
+# a fresh `actions/checkout`, so it would read the committed placeholders again
+# (version 0.1.0, sha256 000...0) and `brew`/`scoop`/`choco` would fail on the
+# checksum for ever. The rewritten `packaging/` tree therefore has to cross the
+# job boundary as an artifact.
+
+#: Artifact that carries the rewritten packaging tree to the publish jobs.
+MANIFEST_ARTIFACT = "packaging-manifests"
+
+#: The publish jobs that consume a manifest from `packaging/`.
+MANIFEST_PUBLISH_JOBS = (
+    "publish-homebrew",
+    "publish-scoop",
+    "publish-winget",
+    "publish-chocolatey",
+)
+
+#: The manifest each publish job hands to the outside world.
+PUBLISHED_MANIFESTS = {
+    "publish-homebrew": "packaging/homebrew/stratum-memory.rb",
+    "publish-scoop": "packaging/scoop/stratum-memory.json",
+    "publish-winget": "packaging/winget/",
+    "publish-chocolatey": "packaging/chocolatey/",
+}
+
+
+def _upload_step(job: dict, name: str) -> dict:
+    for step in _steps(job):
+        if step.get("uses") == "actions/upload-artifact@v4" and step.get("with", {}).get("name") == name:
+            return step
+    raise AssertionError(f"no upload-artifact step for {name!r}")
+
+
+def _download_steps(job: dict, name: str) -> list[dict]:
+    return [
+        step
+        for step in _steps(job)
+        if step.get("uses") == "actions/download-artifact@v4"
+        and step.get("with", {}).get("name") == name
+    ]
+
+
+def test_release_uploads_the_rewritten_packaging_tree() -> None:
+    job = _job(_load(RELEASE), "release")
+    step = _upload_step(job, MANIFEST_ARTIFACT)
+    assert step["with"]["path"] == "packaging", (
+        "the artifact must carry the packaging/ tree the rewriter changed"
+    )
+    assert step["with"]["if-no-files-found"] == "error"
+    # ...and it must be uploaded AFTER the rewrite, or it ships placeholders.
+    order = [str(s.get("name", "")) for s in _steps(job)]
+    rewrite = next(index for index, name in enumerate(order) if "Rewrite the packaging" in name)
+    upload = next(index for index, name in enumerate(order) if name == step["name"])
+    assert rewrite < upload, "the artifact must be uploaded after update-manifests.py runs"
+
+
+@pytest.mark.parametrize("job_name", MANIFEST_PUBLISH_JOBS)
+@needs_yaml
+def test_publish_jobs_download_the_rewritten_manifests(job_name: str) -> None:
+    job = _job(_load(RELEASE), job_name)
+    steps = _download_steps(job, MANIFEST_ARTIFACT)
+    assert steps, f"{job_name} must download the {MANIFEST_ARTIFACT} artifact"
+    assert steps[0]["with"]["path"] == "packaging", (
+        f"{job_name} must restore the artifact into packaging/"
+    )
+    # The download has to come before anything reads or packs a manifest.
+    download = next(
+        index
+        for index, step in enumerate(_steps(job))
+        if step.get("uses") == "actions/download-artifact@v4"
+        and step.get("with", {}).get("name") == MANIFEST_ARTIFACT
+    )
+    manifest = PUBLISHED_MANIFESTS[job_name]
+    for index, step in enumerate(_steps(job)):
+        body = str(step.get("run", "")) + str(step.get("with", ""))
+        if manifest in body:
+            assert download < index, (
+                f"{job_name} touches {manifest} before downloading the rewritten manifests"
+            )
+
+
+@pytest.mark.parametrize("job_name", MANIFEST_PUBLISH_JOBS)
+@needs_yaml
+def test_publish_jobs_publish_a_real_manifest(job_name: str) -> None:
+    """Each job must move the rewritten file into the store, not skip it."""
+    text = json.dumps(_job(_load(RELEASE), job_name), default=str)
+    assert "packaging/" in text, f"{job_name} must read the manifest from packaging/"
+    assert any(
+        command in text
+        for command in ("cp ", "choco pack", "wingetcreate", "git add")
+    ), f"{job_name} never publishes anything"
+
+
+def test_publish_winget_verifies_the_version_before_submitting() -> None:
+    """A placeholder manifest would open a winget PR for the wrong version."""
+    job = _job(_load(RELEASE), "publish-winget")
+    checks = [
+        step
+        for step in _steps(job)
+        if step.get("if") == "${{ env.WINGET_TOKEN != '' }}"
+        and "PackageVersion" in str(step.get("run", ""))
+    ]
+    assert checks, "publish-winget must check PackageVersion before wingetcreate runs"
+    order = [str(step.get("name", "")) for step in _steps(job)]
+    check_index = order.index(checks[0]["name"])
+    submit_index = next(index for index, name in enumerate(order) if name == "Submit the manifest update")
+    assert check_index < submit_index, "the version check must run before the submission"
+
+
+def test_publish_chocolatey_pack_command_resolves_to_the_install_script() -> None:
+    """`choco pack` must name a nuspec whose glob really matches the script.
+
+    `choco pack` copies only what `<file src=...>` matches, so a nuspec globbing
+    `tools\\**` while the script sits flat packs a package with no install
+    script at all - and the release job would push that empty package.
+    """
+    job = _job(_load(RELEASE), "publish-chocolatey")
+    match = re.search(r"choco pack (\S+\.nuspec)", _run_text(job))
+    assert match, "the Chocolatey job must run `choco pack <nuspec>`"
+
+    nuspec = REPO_ROOT / match.group(1)
+    assert nuspec.is_file(), f"the pack command names a missing nuspec: {match.group(1)}"
+
+    root = ET.fromstring(nuspec.read_text(encoding="utf-8"))
+    sources = [element.get("src") for element in root.findall("n:files/n:file", NUSPEC_NS)]
+    assert sources, "the nuspec must declare at least one <file>"
+    for source in sources:
+        # `tools\**` -> the tools directory, resolved next to the nuspec.
+        resolved = (nuspec.parent / source.replace("\\", "/")).parent
+        assert resolved.is_dir(), f"the nuspec glob {source!r} matches nothing at {resolved}"
+        assert list(resolved.iterdir()), f"the nuspec glob {source!r} matches an empty directory"
+
+
+def test_manifest_handoff_is_documented_in_the_workflow() -> None:
+    """The workflow itself must explain why the artifact exists."""
+    text = _text(RELEASE)
+    assert MANIFEST_ARTIFACT in text
+    assert "fresh `actions/checkout`" in text or "fresh checkout" in text, (
+        "the comment must name the reason (fresh checkout loses the rewrite)"
+    )
+
+
+def _guard_snippet() -> str:
+    """The inline python of release.yml's placeholder guard."""
+    job = _job(_load(RELEASE), "release")
+    for step in _steps(job):
+        run = str(step.get("run", ""))
+        if "placeholder survived the rewrite" in str(step.get("name", "")):
+            body = run.split("<<'PY'", 1)[1].split("\nPY", 1)[0]
+            return body
+    raise AssertionError("release.yml must guard against surviving placeholders")
+
+
+def _run_guard(tmp_path: Path, packaging: Path, version: str) -> subprocess.CompletedProcess:
+    work = Path(tempfile.mkdtemp(dir=tmp_path))
+    shutil.copytree(packaging, work / "packaging")
+    return subprocess.run(
+        [sys.executable, "-c", _guard_snippet()],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=str(work),
+        env={"PATH": "/usr/bin:/bin", "VERSION": version},
+    )
+
+
+def test_placeholder_guard_accepts_a_rewritten_tree(tmp_path: Path) -> None:
+    """The guard must not fire on a correctly rewritten packaging tree."""
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    _run_rewriter(scratch, version="0.2.0")
+
+    result = _run_guard(tmp_path, scratch / "packaging", "0.2.0")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "0.2.0" in result.stdout
+
+
+def test_placeholder_guard_rejects_a_stale_tree(tmp_path: Path) -> None:
+    """A tree that still carries 0.1.0 / zeroed digests must stop the release."""
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    _run_rewriter(scratch, version="0.2.0")
+    locale = scratch / "packaging" / "winget" / "TotalBassJunkie.StratumMemory.locale.en-US.yaml"
+    locale.write_text(
+        "PackageVersion: 0.1.0\n"
+        "ReleaseNotesUrl: https://github.com/TotalBassJunkie/stratum-memory/releases/tag/v0.1.0\n",
+        encoding="utf-8",
+    )
+    result = _run_guard(tmp_path, scratch / "packaging", "0.2.0")
+    assert result.returncode != 0, "a stale ReleaseNotesUrl must fail the guard"
+    assert "v0.1.0" in result.stdout + result.stderr
+
+    # ...and the zeroed checksum placeholder is caught as well.
+    installer = scratch / "packaging" / "winget" / "TotalBassJunkie.StratumMemory.installer.yaml"
+    installer.write_text(
+        'InstallerSha256: "' + "0" * 64 + '"\n', encoding="utf-8"
+    )
+    result = _run_guard(tmp_path, scratch / "packaging", "0.2.0")
+    assert result.returncode != 0, "a zeroed checksum must fail the guard"
+    assert "zeroed checksum" in result.stdout + result.stderr
 
 
 # ============================================================ publish channels
@@ -570,11 +785,47 @@ def test_manifest_rewriter_replaces_every_placeholder(tmp_path: Path) -> None:
     )
     assert "<version>9.9.9</version>" in nuspec
 
-    install = (tmp_path / "packaging" / "chocolatey" / "chocolateyinstall.ps1").read_text(
-        encoding="utf-8"
-    )
+    install = (
+        tmp_path / "packaging" / "chocolatey" / "tools" / "chocolateyinstall.ps1"
+    ).read_text(encoding="utf-8")
     assert "Stratum-9.9.9-x64.msi" in install
     assert f"{3:064x}" in install
+
+
+def test_manifest_rewriter_updates_the_winget_release_notes_url(tmp_path: Path) -> None:
+    """A v0.2.0 release must not keep advertising the v0.1.0 release notes."""
+    code, output = _run_rewriter(tmp_path, version="0.2.0")
+    assert code == 0, output
+
+    locale = (
+        tmp_path / "packaging" / "winget" / "TotalBassJunkie.StratumMemory.locale.en-US.yaml"
+    ).read_text(encoding="utf-8")
+    assert "PackageVersion: 0.2.0" in locale
+    assert (
+        "ReleaseNotesUrl: https://github.com/TotalBassJunkie/stratum-memory/releases/tag/v0.2.0"
+        in locale
+    ), "ReleaseNotesUrl must follow the new version"
+    assert "releases/tag/v0.1.0" not in locale, "the stale v0.1.0 URL must be gone"
+
+
+def test_manifest_rewriter_leaves_no_placeholder_behind(tmp_path: Path) -> None:
+    """Whatever the publish jobs read must be free of 0.1.0 and zeroed digests."""
+    code, output = _run_rewriter(tmp_path, version="0.2.0")
+    assert code == 0, output
+
+    scanned = [
+        path
+        for path in sorted((tmp_path / "packaging").rglob("*"))
+        if path.is_file() and path.suffix in {".rb", ".json", ".yaml", ".nuspec", ".ps1"}
+    ]
+    assert scanned, "the rewriter must have touched manifests"
+    zero = "0" * 64
+    for path in scanned:
+        text = path.read_text(encoding="utf-8")
+        assert zero not in text, f"{path.name} still carries the zeroed checksum"
+        assert not re.search(r"releases/(?:download|tag)/v(?!0\.2\.0)[0-9][^/\"'\s]*", text), (
+            f"{path.name} still points at a stale tag"
+        )
 
 
 def test_manifest_rewriter_fails_loudly_without_checksums(tmp_path: Path) -> None:

@@ -21,7 +21,7 @@ Covered:
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -91,7 +91,7 @@ def _norm(sql: str) -> str:
 
 
 class _FakeCursor:
-    def __init__(self, db: "FakeDB") -> None:
+    def __init__(self, db: FakeDB) -> None:
         self._db = db
         self._last: Any = None
 
@@ -104,7 +104,7 @@ class _FakeCursor:
     def fetchall(self) -> Any:
         return self._last if isinstance(self._last, list) else []
 
-    def __enter__(self) -> "_FakeCursor":
+    def __enter__(self) -> _FakeCursor:
         return self
 
     def __exit__(self, *exc: object) -> bool:
@@ -112,7 +112,7 @@ class _FakeCursor:
 
 
 class _FakeConnection:
-    def __init__(self, db: "FakeDB") -> None:
+    def __init__(self, db: FakeDB) -> None:
         self._db = db
 
     def cursor(self) -> _FakeCursor:
@@ -121,7 +121,7 @@ class _FakeConnection:
     def commit(self) -> None:
         pass
 
-    def __enter__(self) -> "_FakeConnection":
+    def __enter__(self) -> _FakeConnection:
         return self
 
     def __exit__(self, *exc: object) -> bool:
@@ -228,7 +228,7 @@ class FakeDB:
 class _TxnConnection:
     """A connection that snapshots the DB and rolls back on exception (B2/M2)."""
 
-    def __init__(self, db: "TransactionalDB") -> None:
+    def __init__(self, db: TransactionalDB) -> None:
         self._db = db
         self._snapshot = db._snapshot()
 
@@ -238,7 +238,7 @@ class _TxnConnection:
     def commit(self) -> None:
         pass
 
-    def __enter__(self) -> "_TxnConnection":
+    def __enter__(self) -> _TxnConnection:
         return self
 
     def __exit__(self, exc_type: object, *exc: object) -> bool:
@@ -551,7 +551,7 @@ def test_time_valid_from_after_valid_to_is_rejected():
 
 
 def test_time_far_future_valid_from_is_rejected():
-    future = datetime.now(timezone.utc) + timedelta(days=400)
+    future = datetime.now(UTC) + timedelta(days=400)
     cand = fact_candidate(payload={"valid_from": future.isoformat()})
     verdict = _curator().validate("default", cand)
     assert verdict.approved is False
@@ -559,7 +559,7 @@ def test_time_far_future_valid_from_is_rejected():
 
 
 def test_time_near_future_valid_from_is_approved():
-    future = datetime.now(timezone.utc) + timedelta(days=30)
+    future = datetime.now(UTC) + timedelta(days=30)
     cand = fact_candidate(payload={"valid_from": future.isoformat()})
     verdict = _curator().validate("default", cand)
     assert verdict.approved is True

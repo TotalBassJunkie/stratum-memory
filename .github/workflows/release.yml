@@ -37,6 +37,15 @@
 # `release`, so the GitHub Release and the container image are never blocked by
 # an optional channel (docs/distribution.md, "What needs a one-time human step").
 #
+# MANIFEST HAND-OFF: `update-manifests.py` rewrites the packaging manifests in
+# the `release` job's workspace only. The publish jobs (homebrew, scoop, winget,
+# chocolatey) each do a fresh `actions/checkout`, so they would otherwise read
+# the committed placeholders again (version 0.1.0, sha256 000...0) and fail
+# permanently on the checksum. The `release` job therefore uploads the whole
+# rewritten `packaging/` tree as the `packaging-manifests` artifact, and every
+# publish job downloads it into `packaging` *before* it copies or packs
+# anything. Both sides are pinned by tests/test_workflows.py.
+#
 # SECURITY: the `secrets` context is deliberately NOT read in any `if:`
 # condition (GitHub rejects that at parse time). Every gate lifts its secret
 # into a job-level `env:` - where the `secrets` context is allowed - and tests
@@ -473,6 +482,54 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python .github/workflows/scripts/update-manifests.py
 
+      # The rewrite above only touches THIS job's workspace. Every publish job
+      # does a fresh `actions/checkout`, so without shipping the rewritten tree
+      # across the job boundary they would read the committed placeholders
+      # again (version 0.1.0, sha256 000...0) and `brew`/`scoop`/`choco` would
+      # fail on the checksum for ever. The artifact below is that bridge: it is
+      # uploaded here, after the rewrite, and pulled in by every publish job
+      # before it copies or packs anything. The artifact root is the *contents*
+      # of packaging/, so downloading it to `packaging` restores the tree.
+      - name: Fail when a placeholder survived the rewrite
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import sys
+
+          version = os.environ["VERSION"]
+          zero = "0" * 64
+          texts = [
+              (path, path.read_text(encoding="utf-8"))
+              for path in sorted(pathlib.Path("packaging").rglob("*"))
+              if path.is_file() and path.suffix in {".rb", ".json", ".yaml", ".nuspec", ".ps1"}
+          ]
+          if not texts:
+              sys.exit("no packaging manifests were rewritten")
+          problems = []
+          for path, text in texts:
+              if zero in text:
+                  problems.append(f"{path} still carries the zeroed checksum placeholder")
+              # Stop at the delimiters that may follow a URL in a manifest
+              # (`/filename`, `</releaseNotes>`, a closing quote, a comma).
+              for tag in re.findall(r"releases/(?:download|tag)/v([0-9][^/\"'<>\s,)]*)", text):
+                  if tag != version:
+                      problems.append(f"{path} still points at the stale tag v{tag}")
+          if problems:
+              sys.exit("rewrite incomplete: " + "; ".join(problems))
+          print(f"rewrote {len(texts)} manifests for {version}")
+          PY
+
+      - name: Upload the rewritten packaging tree
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaging-manifests
+          path: packaging
+          if-no-files-found: error
+
       # Mandatory channel 1: the GitHub Release with every contract asset.
       - name: Create the GitHub Release
         uses: softprops/action-gh-release@v2
@@ -591,6 +648,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # The rewritten manifests live in the `packaging-manifests` artifact of
+      # the `release` job (see the note there). A fresh checkout carries only
+      # the committed placeholders, so this MUST run before the formula is
+      # copied - otherwise the tap receives version 0.1.0 and sha256 000...0.
+      - name: Download the rewritten packaging tree
+        uses: actions/download-artifact@v4
+        with:
+          name: packaging-manifests
+          path: packaging
+
       - name: Skip (no tap token configured)
         if: ${{ env.TAP_GITHUB_TOKEN == '' }}
         run: echo "::notice::TAP_GITHUB_TOKEN is not set; skipping the Homebrew tap."
@@ -630,6 +697,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Pull the manifests the `release` job rewrote; the checkout above only
+      # has the committed placeholders (see the note in the `release` job).
+      - name: Download the rewritten packaging tree
+        uses: actions/download-artifact@v4
+        with:
+          name: packaging-manifests
+          path: packaging
 
       - name: Skip (no bucket token configured)
         if: ${{ env.TAP_GITHUB_TOKEN == '' }}
@@ -671,10 +746,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # wingetcreate derives its PR from the manifests on disk, so the rewrite
+      # has to be present here: a fresh checkout would resubmit the placeholders
+      # (see the note in the `release` job).
+      - name: Download the rewritten packaging tree
+        uses: actions/download-artifact@v4
+        with:
+          name: packaging-manifests
+          path: packaging
+
       - name: Skip (no winget token configured)
         if: ${{ env.WINGET_TOKEN == '' }}
         shell: pwsh
         run: Write-Output "::notice::WINGET_TOKEN is not set; skipping the winget PR."
+
+      - name: Verify the manifests carry the release version
+        if: ${{ env.WINGET_TOKEN != '' }}
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          # wingetcreate reads the local manifests; a placeholder would open a
+          # PR for the wrong version, so fail loudly instead.
+          $manifest = "packaging/winget/TotalBassJunkie.StratumMemory.yaml"
+          $text = Get-Content -Raw $manifest
+          if ($text -notmatch "(?m)^PackageVersion:\s*$([regex]::Escape($env:VERSION))\s*$") {
+            throw "$manifest does not carry PackageVersion $env:VERSION"
+          }
+          Write-Output "winget manifests are at $env:VERSION"
 
       - name: Submit the manifest update
         if: ${{ env.WINGET_TOKEN != '' }}
@@ -700,6 +799,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # `choco pack` reads the nuspec AND tools/chocolateyinstall.ps1 from the
+      # working tree, so the rewritten version/url64bit/checksum64 must be
+      # fetched here first (see the note in the `release` job).
+      - name: Download the rewritten packaging tree
+        uses: actions/download-artifact@v4
+        with:
+          name: packaging-manifests
+          path: packaging
 
       - name: Skip (no Chocolatey API key configured)
         if: ${{ env.CHOCOLATEY_API_KEY == '' }}

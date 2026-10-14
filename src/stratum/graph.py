@@ -27,8 +27,10 @@ Timestamps accept ``str`` (ISO-8601, including a trailing ``Z``) or
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Callable, ContextManager, Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from contextlib import AbstractContextManager
+from datetime import UTC, datetime
+from typing import Any
 
 from psycopg.types.json import Jsonb
 
@@ -63,8 +65,8 @@ def normalize_utc(value: str | datetime | None) -> datetime | None:
     else:  # pragma: no cover - defensive
         raise TypeError(f"expected str | datetime | None, got {type(value)!r}")
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def _format_embedding(vector: Iterable[float] | None) -> str | None:
@@ -87,7 +89,7 @@ def _json_param(value: Any) -> Jsonb | None:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class TemporalGraph:
@@ -107,14 +109,14 @@ class TemporalGraph:
         self,
         settings: Settings | None = None,
         *,
-        conn_factory: Callable[[str], ContextManager[Any]] | None = None,
+        conn_factory: Callable[[str], AbstractContextManager[Any]] | None = None,
     ) -> None:
         self._settings = settings or get_settings()
         vec = self._settings.vector_type
         if vec not in _VEC_TYPES:
             raise ValueError(f"vector_type must be one of {_VEC_TYPES}, got {vec!r}")
         self._vec_type = vec
-        self._connect: Callable[[str], ContextManager[Any]] = conn_factory or db.connection
+        self._connect: Callable[[str], AbstractContextManager[Any]] = conn_factory or db.connection
 
     # ----------------------------------------------------------------- entities
 

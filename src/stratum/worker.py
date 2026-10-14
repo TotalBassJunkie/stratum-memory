@@ -38,7 +38,7 @@ import os
 import threading
 import time
 from collections.abc import Callable, Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from psycopg.types.json import Jsonb
@@ -98,11 +98,11 @@ def _coerce_run_after(value: str | datetime | None) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
     if isinstance(value, str):
         text = value[:-1] + "+00:00" if value.endswith("Z") else value
         parsed = datetime.fromisoformat(text)
-        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
     raise TypeError(f"run_after must be str/datetime/None, got {type(value).__name__}")
 
 

@@ -3,9 +3,13 @@
   Chocolatey package for Stratum-Memory.
 
   Contract: docs/distribution.md. The WiX MSI attached to the GitHub Release is
-  installed silently by chocolateyinstall.ps1. The version, the download URL and
-  the checksum are rewritten by .github/workflows/release.yml on every tag; do
-  not hand-edit them in the community feed.
+  installed silently by tools/chocolateyinstall.ps1. The version, the download
+  URL and the checksum are rewritten by .github/workflows/release.yml on every
+  tag; do not hand-edit them in the community feed.
+
+  The <file> glob below must keep matching the real layout: `choco pack` copies
+  only what it matches, so a script outside tools/ would silently be dropped
+  from the nupkg. tools/chocolateyinstall.ps1 is the single install script.
 -->
 <package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
   <metadata>

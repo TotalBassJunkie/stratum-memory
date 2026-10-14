@@ -43,12 +43,12 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
-from contextlib import contextmanager
+from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, ContextManager
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from psycopg.types.json import Jsonb
 
@@ -253,7 +253,7 @@ def _time_violation(payload: Mapping[str, Any], *, now: datetime | None = None) 
     if valid_from is not None and valid_to is not None and valid_from > valid_to:
         return True
     if valid_from is not None:
-        reference = now or datetime.now(timezone.utc)
+        reference = now or datetime.now(UTC)
         if valid_from > reference + _ONE_YEAR:
             return True
     return False
@@ -287,10 +287,10 @@ class Curator:
         *,
         store: Any | None = None,
         graph: Any | None = None,
-        conn_factory: Callable[[str], ContextManager[Any]] | None = None,
+        conn_factory: Callable[[str], AbstractContextManager[Any]] | None = None,
     ) -> None:
         self.settings = settings or get_settings()
-        self._factory: Callable[[str], ContextManager[Any]] = (
+        self._factory: Callable[[str], AbstractContextManager[Any]] = (
             conn_factory or db.connection
         )
         # One connection per ``promote`` decision (B2/M2). ``_connection`` yields

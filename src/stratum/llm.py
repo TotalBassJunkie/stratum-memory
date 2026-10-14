@@ -24,8 +24,9 @@ import asyncio
 import hashlib
 import json
 from collections import OrderedDict
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 import httpx
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt

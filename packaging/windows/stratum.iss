@@ -132,10 +132,13 @@ Source: "{#ExePath}"; DestDir: "{app}"; DestName: "stratum.exe"; Flags: ignoreve
 ;   * admin install   -> HKLM\...\Environment (HKA maps to HKLM in admin mode)
 ;
 ; The value keeps its original type (REG_EXPAND_SZ stays expandable) thanks to
-; preservestringtype, and uninsdeletevalue removes the entry on uninstall.
+; preservestringtype. There is deliberately NO delete-on-uninstall flag here:
+; such a flag deletes the whole `Path` value on uninstall and would wipe every
+; other entry of the user's PATH. The [Code] hook below removes only this
+; application's own directory instead.
 ; ValueData appends the new directory to whatever was there before, and
 ; tolerates a missing or empty previous value.
-Root: HKA; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Flags: preservestringtype uninsdeletevalue; Check: NeedsAddPath
+Root: HKA; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Flags: preservestringtype; Check: NeedsAddPath
 
 ; ============================================================ [Icons] =====
 [Icons]
@@ -156,15 +159,69 @@ begin
                 ';' + Uppercase(Existing) + ';') = 0;
 end;
 
-{ Uninstall is handled declaratively: the [Registry] entry carries
-  `uninsdeletevalue` (so the PATH entry goes away) and [Icons] entries are
-  removed by Setup, while the uninstaller deletes the application directory and
-  the Start-menu folder it created. Nothing else is left behind. }
+{ Return Path with every entry equal to Entry removed.
+
+  The comparison is case-insensitive (Windows PATH is) and empty entries are
+  dropped as well, so the naive append in [Registry] - which produces a
+  trailing ";" and can leave ";;" behind - is cleaned up in the same pass.
+  Nothing else is touched: an unrelated directory that happens to be a prefix
+  or a suffix of our own is kept, and a missing or empty Path simply yields an
+  empty result instead of raising. }
+function StripPathEntry(const Path, Entry: string): string;
+var
+  Index: Integer;
+  Rest, Current, Kept: string;
+begin
+  Kept := '';
+  Rest := Path;
+  while True do
+  begin
+    Index := Pos(';', Rest);
+    if Index = 0 then
+    begin
+      Current := Rest;
+      Rest := '';
+    end
+    else
+    begin
+      Current := Copy(Rest, 1, Index - 1);
+      Rest := Copy(Rest, Index + 1, Length(Rest) - Index);
+    end;
+
+    if (Current <> '') and (CompareText(Current, Entry) <> 0) then
+    begin
+      if Kept <> '' then
+        Kept := Kept + ';';
+      Kept := Kept + Current;
+    end;
+
+    if Index = 0 then
+      Break;
+  end;
+  Result := Kept;
+end;
+
+{ Uninstall: remove ONLY this application's directory from PATH.
+
+  The [Registry] entry deliberately does not delete the value on uninstall -
+  that would delete the whole `Path` value and wipe every other entry of the
+  user's PATH. The filter below is the replacement: it rewrites Path without
+  our own entry and deletes the value only when nothing is left of it. The
+  rest of the uninstall is declarative ([Files] and [Icons] are removed by
+  Setup itself). }
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Existing, Updated: string;
 begin
   if CurUninstallStep = usUninstall then
   begin
-    { Nothing to do - kept as the documented hook in case a future release has
-      to clean up generated state (e.g. ~/.stratum). }
+    if RegQueryStringValue(HKA, 'Environment', 'Path', Existing) then
+    begin
+      Updated := StripPathEntry(Existing, ExpandConstant('{app}'));
+      if Updated = '' then
+        RegDeleteValue(HKA, 'Environment', 'Path')
+      else
+        RegWriteExpandStringValue(HKA, 'Environment', 'Path', Updated);
+    end;
   end;
 end;

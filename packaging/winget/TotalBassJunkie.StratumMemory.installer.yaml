@@ -14,8 +14,10 @@ InstallModes:
   - silent
   - silentWithProgress
 UpgradeBehavior: install
-# The WiX MSI generates its ProductCode at build time; the release workflow
-# fills this in from the built artifact.
+# The WiX MSI generates its ProductCode at build time. This placeholder is only
+# a schema-valid stand-in for the committed manifest: `wingetcreate update`
+# rewrites ProductCode from the built MSI when it opens the PR (the release
+# workflow deliberately does not touch it).
 ProductCode: "{00000000-0000-0000-0000-000000000000}"
 Installers:
   - Architecture: x64

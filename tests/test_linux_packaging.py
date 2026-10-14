@@ -232,6 +232,41 @@ def test_snapcraft_yaml_stages_python3() -> None:
     assert "python3" in stage, f"a part must stage python3; got {sorted(stage)}"
 
 
+def test_snapcraft_yaml_uses_core24_for_python_312() -> None:
+    """The project needs >= 3.12; core22 would ship Python 3.10 and break it."""
+    text = SNAPCRAFT_YAML.read_text(encoding="utf-8")
+    config = _load_yaml(SNAPCRAFT_YAML)
+    assert config["base"] == "core24", "the snap must build on core24 (Ubuntu 24.04)"
+    assert "core22" not in text, "core22 only carries Python 3.10 and must not come back"
+    assert "python3.10" not in text, "a Python 3.10 prime path is a hard-coded bug"
+
+
+def test_snapcraft_yaml_primes_the_real_interpreter() -> None:
+    config = _load_yaml(SNAPCRAFT_YAML)
+    parts = config.get("parts") or {}
+    primed = {entry for part in parts.values() for entry in (part.get("prime") or [])}
+    assert "usr/lib/python3.12" in primed, (
+        f"the prime list must name the real interpreter (usr/lib/python3.12); got {sorted(primed)}"
+    )
+    assert "bin/stratum" in primed, "the CLI launcher must be primed"
+    assert not any(entry.startswith("usr/lib/python3.1") and entry != "usr/lib/python3.12" for entry in primed), (
+        "only the python3.12 tree may be primed"
+    )
+
+
+def test_snapcraft_yaml_keeps_build_and_stage_packages_consistent() -> None:
+    """Both lists must exist and must not contradict the core24 choice."""
+    config = _load_yaml(SNAPCRAFT_YAML)
+    for part in (config.get("parts") or {}).values():
+        for package in (part.get("build-packages") or []) + (part.get("stage-packages") or []):
+            assert not re.search(r"python3\.\d", str(package)), (
+                f"a versioned python package ({package!r}) pins the interpreter; use python3"
+            )
+        assert "python3-pip" in (part.get("build-packages") or []), (
+            "the wheel is installed with pip, so python3-pip must be a build package"
+        )
+
+
 # ============================================================== shell syntax
 
 
@@ -326,6 +361,36 @@ def test_build_appimage_writes_the_contract_asset_name() -> None:
 def test_build_appimage_builds_the_wheel_first() -> None:
     text = BUILD_APPIMAGE_SH.read_text(encoding="utf-8")
     assert "python -m build --wheel" in text, "build-appimage.sh must build the wheel it bundles"
+
+
+@pytest.mark.parametrize("path", (BUILD_DEB_RPM_SH, BUILD_APPIMAGE_SH), ids=lambda p: p.name)
+def test_build_scripts_require_the_version_instead_of_defaulting(path: Path) -> None:
+    """A run without VERSION must stop, not silently build 0.1.0."""
+    text = path.read_text(encoding="utf-8")
+    assert re.search(r'VERSION="\$\{VERSION:\?', text), (
+        f"{path.name} must require VERSION (VERSION=${{VERSION:?set VERSION ...}})"
+    )
+    assert not re.search(r'VERSION="\$\{VERSION:-', text), (
+        f"{path.name} must not fall back to a hard-coded version"
+    )
+    assert not re.search(r'VERSION="\$\{VERSION:-0\.1\.0\}"', text), (
+        f"{path.name} must not hard-code the 0.1.0 fallback"
+    )
+    # The only mention of a concrete version left may be the usage example.
+    for line in text.splitlines():
+        if "0.1.0" in line:
+            assert line.lstrip().startswith("#"), (
+                f"{path.name} mentions a hard-coded version outside a comment: {line!r}"
+            )
+
+
+def test_build_scripts_share_the_macos_version_rule() -> None:
+    """The same `${VERSION:?}` guard the macOS scripts use (packaging/macos/README.md)."""
+    for path in (BUILD_DEB_RPM_SH, BUILD_APPIMAGE_SH):
+        text = path.read_text(encoding="utf-8")
+        assert "see release.yml" in text, (
+            f"{path.name} must point the reader at the workflow that sets VERSION"
+        )
 
 
 def test_readme_documents_every_linux_channel() -> None:

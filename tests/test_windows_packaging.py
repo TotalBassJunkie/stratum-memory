@@ -279,9 +279,64 @@ def test_iss_updates_the_path_and_broadcasts_the_change() -> None:
     assert "NeedsAddPath" in ISS_TEXT
 
 
+def test_iss_path_entry_never_uses_uninsdeletevalue() -> None:
+    """`uninsdeletevalue` on the PATH entry wipes the WHOLE user PATH.
+
+    It deletes the registry *value* (`Path`), not just our own entry, so every
+    other directory on the user's PATH would be lost on uninstall.
+    """
+    for number, line in enumerate(ISS_TEXT.splitlines(), start=1):
+        if not line.lstrip().startswith("Root:"):
+            continue
+        assert 'ValueName: "Path"' in line, f"stratum.iss:{number} is not the PATH entry"
+        assert "uninsdeletevalue" not in line, (
+            f"stratum.iss:{number} deletes the whole PATH value on uninstall"
+        )
+
+
 def test_iss_uninstall_is_clean() -> None:
-    assert "uninsdeletevalue" in ISS_TEXT
+    """The uninstaller removes only this app's own PATH entry, by hand."""
+    assert "uninsdeletevalue" not in ISS_TEXT, (
+        "the PATH entry must be filtered in [Code], not deleted wholesale"
+    )
     assert "CurUninstallStepChanged" in ISS_TEXT
+    assert "StripPathEntry" in ISS_TEXT, "the PATH entry must be filtered, not blanked"
+
+
+def test_iss_uninstall_hook_filters_only_the_own_entry() -> None:
+    """The hook must compare against {app} and delete the value only if empty."""
+    code = ISS_TEXT.split("[Code]", 1)[1]
+    hook = code.split("procedure CurUninstallStepChanged", 1)
+    assert len(hook) == 2, "the uninstall hook must be defined in [Code]"
+    body = hook[1]
+
+    # It runs at uninstall time...
+    assert "usUninstall" in body
+    # ...reads the existing Path instead of overwriting it blindly...
+    assert "RegQueryStringValue" in body
+    # ...compares case-insensitively (Windows PATH is) against this app's own
+    # directory only - the comparison lives in the helper it calls...
+    assert "CompareText" in code, "the entry comparison must be case-insensitive"
+    assert "ExpandConstant('{app}')" in body, "only {app} may be removed"
+    assert "StripPathEntry" in body, "the hook must filter, not blank the value"
+    # ...writes the filtered value back, preserving the string type...
+    assert "RegWriteExpandStringValue" in body
+    # ...and deletes the value only when nothing else is left.
+    assert "RegDeleteValue" in body
+    assert "if Updated = '' then" in body, "Path may only be deleted when it is empty"
+
+
+def test_iss_strip_path_entry_tolerates_missing_entries() -> None:
+    """The filter must survive a missing value, empty entries and repeats."""
+    code = ISS_TEXT.split("[Code]", 1)[1]
+    assert "function StripPathEntry" in code, "the filter helper must exist"
+    function = code.split("function StripPathEntry", 1)[1].split("procedure ", 1)[0]
+    # Empty entries are dropped (`Current <> ''`) and the loop terminates on the
+    # last segment (`if Index = 0 then Break`), so a missing or trailing `;`
+    # cannot raise or loop for ever.
+    assert "Current <> ''" in function
+    assert "Index = 0" in function
+    assert "Break" in function
 
 
 def test_iss_never_hardcodes_a_version() -> None:

@@ -8,10 +8,11 @@
 #   dist/stratum-${VERSION}-1.x86_64.rpm
 #
 # VERSION is *set by the CI* (from src/stratum/__init__.py, the version source
-# named in the contract) and exported into this script's environment; the
-# fallback below only keeps a manual run working. Nothing is downloaded from an
-# untrusted place: nFPM is expected on PATH (CI installs it as a release binary),
-# and the wheel is built locally.
+# named in the contract) and exported into this script's environment; there is
+# deliberately no fallback, so a manual run without VERSION stops instead of
+# quietly building 0.1.0. Nothing is downloaded from an untrusted place: nFPM is
+# expected on PATH (CI installs it as a release binary), and the wheel is built
+# locally.
 #
 # Usage:  VERSION=0.1.0 bash packaging/linux/build-deb-rpm.sh
 set -eu
@@ -19,7 +20,7 @@ set -eu
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-VERSION="${VERSION:-0.1.0}"
+VERSION="${VERSION:?set VERSION (see release.yml)}"
 DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
 
 if ! command -v nfpm >/dev/null 2>&1; then

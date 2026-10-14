@@ -24,7 +24,7 @@ import re
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -63,7 +63,7 @@ class FakeJobDB:
         # Origin of the fake clock. Ephemeral reads (claim/fail/complete/stats)
         # use wall-clock time so a backoff-requeued job really becomes due; a
         # test may pin ``now`` to freeze scheduling assertions exactly.
-        self.origin = datetime.now(timezone.utc)
+        self.origin = datetime.now(UTC)
         self._mono0 = time.monotonic()
         self.now: datetime | None = None
 
@@ -104,12 +104,12 @@ class FakeJobDB:
 
     # -- connection plumbing ------------------------------------------------
 
-    def factory(self, _tenant: str) -> "FakeConnection":
+    def factory(self, _tenant: str) -> FakeConnection:
         return FakeConnection(self)
 
 
 class FakeCursor:
-    def __init__(self, conn: "FakeConnection") -> None:
+    def __init__(self, conn: FakeConnection) -> None:
         self._conn = conn
         self.db = conn.db
         self._rows: list[dict[str, Any]] = []
@@ -148,7 +148,7 @@ class FakeCursor:
     def fetchall(self) -> list[dict[str, Any]]:
         return list(self._rows)
 
-    def __enter__(self) -> "FakeCursor":
+    def __enter__(self) -> FakeCursor:
         return self
 
     def __exit__(self, *exc: object) -> bool:
@@ -261,7 +261,7 @@ class FakeConnection:
     def commit(self) -> None:
         self.commits += 1
 
-    def __enter__(self) -> "FakeConnection":
+    def __enter__(self) -> FakeConnection:
         return self
 
     def __exit__(self, *exc: object) -> bool:
@@ -358,7 +358,7 @@ def test_claim_marks_job_running_and_increments_attempts():
 
 def test_claim_only_returns_queued_and_due_jobs():
     db = FakeJobDB()
-    db.now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)  # pinned clock
+    db.now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)  # pinned clock
     queue = _queue(db)
     # A job scheduled in the future must not be claimed yet.
     future = queue.enqueue("default", "ingest", run_after=db.now + timedelta(hours=1))
@@ -455,7 +455,7 @@ def test_complete_marks_done():
 
 def test_fail_below_max_requeues_with_future_backoff():
     db = FakeJobDB()
-    db.now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)  # pinned clock
+    db.now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)  # pinned clock
     queue = _queue(db)
     job_id = queue.enqueue("default", "ingest", max_attempts=3)
     queue.claim("default", "w1")  # attempts -> 1
@@ -495,7 +495,7 @@ def test_fail_unknown_job_is_a_noop():
 
 def test_recover_stale_requeues_old_running_jobs():
     db = FakeJobDB()
-    db.now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)  # pinned clock
+    db.now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)  # pinned clock
     queue = _queue(db)
     stale = db.add_running(kind="ingest", locked_at=db.now - timedelta(seconds=600))
     fresh = db.add_running(kind="ingest", locked_at=db.now - timedelta(seconds=1))

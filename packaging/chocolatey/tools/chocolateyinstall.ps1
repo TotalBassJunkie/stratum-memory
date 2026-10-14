@@ -7,6 +7,11 @@
   records the uninstall key so `choco uninstall stratum-memory` works. The
   version, the download URL and the checksum below are rewritten by
   .github/workflows/release.yml on every tag.
+
+  The file lives in `tools/` on purpose: `choco pack` copies exactly the
+  `<file src=...>` globs of the nuspec into the nupkg, and the nuspec declares
+  `tools\**`. A script sitting next to the nuspec would be packed nowhere, and
+  the resulting package would install nothing.
 #>
 
 $ErrorActionPreference = 'Stop'

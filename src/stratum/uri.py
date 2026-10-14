@@ -25,7 +25,7 @@ class StratumUri:
     def uri(self) -> str:
         return f"{_SCHEME}://{self.bereich}/{self.tenant}/{self.path}"
 
-    def with_path(self, new_path: str) -> "StratumUri":
+    def with_path(self, new_path: str) -> StratumUri:
         return StratumUri(self.bereich, self.tenant, new_path)
 
 

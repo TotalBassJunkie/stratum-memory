@@ -35,7 +35,10 @@ WINGET_VERSION = PACKAGING_DIR / "winget" / "TotalBassJunkie.StratumMemory.yaml"
 WINGET_INSTALLER = PACKAGING_DIR / "winget" / "TotalBassJunkie.StratumMemory.installer.yaml"
 WINGET_LOCALE = PACKAGING_DIR / "winget" / "TotalBassJunkie.StratumMemory.locale.en-US.yaml"
 CHOCO_NUSPEC = PACKAGING_DIR / "chocolatey" / "stratum-memory.nuspec"
-CHOCO_INSTALL = PACKAGING_DIR / "chocolatey" / "chocolateyinstall.ps1"
+#: `choco pack` copies only what the nuspec matches, so the script must sit in
+#: the `tools/` directory the nuspec globs - not next to the nuspec.
+CHOCO_INSTALL = PACKAGING_DIR / "chocolatey" / "tools" / "chocolateyinstall.ps1"
+CHOCO_FLAT_INSTALL = PACKAGING_DIR / "chocolatey" / "chocolateyinstall.ps1"
 PACKAGING_README = PACKAGING_DIR / "README.md"
 
 #: Every file this suite owns (see the task's Dateihoheit).
@@ -236,6 +239,28 @@ def test_winget_installer_has_the_ci_placeholder_marker() -> None:
     assert CI_MARKER in _text(WINGET_INSTALLER)
 
 
+@needs_yaml
+def test_winget_installer_does_not_claim_the_rewriter_fills_productcode() -> None:
+    """The comment in the manifest must attribute ProductCode to wingetcreate."""
+    text = _text(WINGET_INSTALLER)
+    assert "ProductCode" in text
+    collapsed = " ".join(text.split())
+    for match in re.finditer("ProductCode", collapsed):
+        window = collapsed[max(0, match.start() - 250) : match.start() + 150]
+        assert "wingetcreate" in window or "does not touch" in window, (
+            f"the manifest credits the release workflow with ProductCode: {window!r}"
+        )
+
+
+@needs_yaml
+def test_winget_locale_release_notes_point_at_the_current_release() -> None:
+    """A stale ReleaseNotesUrl would advertise the wrong release for ever."""
+    data = _load_yaml(WINGET_LOCALE)
+    assert data["ReleaseNotesUrl"] == f"{GH_REPO_URL}/releases/tag/{RELEASE_TAG}", (
+        "ReleaseNotesUrl must point at the tag of the current __version__"
+    )
+
+
 # ================================================================== chocolatey
 
 
@@ -270,6 +295,36 @@ def test_chocolatey_install_script_has_the_ci_placeholder_marker() -> None:
     assert CI_MARKER in _text(CHOCO_INSTALL)
 
 
+def test_chocolatey_nuspec_file_glob_matches_the_real_layout() -> None:
+    """`choco pack` only copies what `<file src=...>` matches.
+
+    A `.nuspec` that globs `tools\\**` while the script sits flat packs a
+    package with no install script at all.
+    """
+    root = ET.fromstring(_text(CHOCO_NUSPEC))
+    files = root.find("n:files", NUSPEC_NS)
+    assert files is not None, "the nuspec must declare a <files> section"
+    sources = [element.get("src") for element in files]
+    assert sources, "the nuspec must declare at least one <file>"
+    assert any(source and source.replace("\\", "/").startswith("tools/") for source in sources), (
+        f"the nuspec must pack tools/**, got {sources}"
+    )
+    # ...and the script really lives where that glob looks for it.
+    assert CHOCO_INSTALL.is_file(), f"missing install script: {CHOCO_INSTALL}"
+    assert not CHOCO_FLAT_INSTALL.is_file(), (
+        "chocolateyinstall.ps1 must live in tools/, not next to the nuspec"
+    )
+    for source in sources:
+        assert source, "an empty <file src> matches nothing"
+        assert "*" not in source.replace("**", ""), f"unexpected glob: {source}"
+
+
+def test_chocolatey_tools_dir_holds_the_install_script() -> None:
+    tools = CHOCO_INSTALL.parent
+    assert tools.name == "tools"
+    assert sorted(path.name for path in tools.iterdir()) == ["chocolateyinstall.ps1"]
+
+
 # =============================================================== cross-cutting
 
 
@@ -298,6 +353,49 @@ def test_packaging_readme_documents_every_channel() -> None:
     # The CI-replaces-the-placeholders caveat must be stated for the user.
     assert "placeholder" in text.lower()
     assert ".github/workflows/release.yml" in text
+    # The nuspec globs tools/, so the README must name the real path.
+    assert "chocolatey/tools/chocolateyinstall.ps1" in text
+
+
+def test_packaging_readme_documents_the_winget_first_submission() -> None:
+    """`wingetcreate update` fails until the package exists in winget-pkgs."""
+    text = _text(PACKAGING_README)
+    assert "wingetcreate new" in text, "the one-time first submission must be documented"
+    assert "once" in text.lower(), "it must be marked as a one-time step"
+
+
+def test_packaging_readme_does_not_claim_productcode_is_rewritten() -> None:
+    """`wingetcreate` fills ProductCode in; the rewriter must not be credited."""
+    text = _text(PACKAGING_README)
+    assert "ProductCode" in text, "the ProductCode caveat must be stated"
+    # The claim wraps across lines, so check the window after each mention. Every
+    # mention must attribute it to wingetcreate; the old wording listed
+    # ProductCode as one of the rewriter's fields.
+    collapsed = " ".join(text.split())
+    for match in re.finditer("ProductCode", collapsed):
+        window = collapsed[match.start() : match.start() + 200]
+        assert "wingetcreate" in window, (
+            f"the README must attribute ProductCode to wingetcreate: {window!r}"
+        )
+    # The rewriter's own docstring must not credit itself either.
+    rewriter = (REPO_ROOT / ".github" / "workflows" / "scripts" / "update-manifests.py").read_text(
+        encoding="utf-8"
+    )
+    assert "ProductCode" in rewriter, "the rewriter must explain why it skips ProductCode"
+    collapsed_script = " ".join(rewriter.split())
+    for match in re.finditer("ProductCode", collapsed_script):
+        window = collapsed_script[match.start() : match.start() + 200]
+        assert "wingetcreate" in window or "not" in window, (
+            f"the rewriter docstring claims it writes ProductCode: {window!r}"
+        )
+
+
+def test_packaging_readme_explains_the_manifest_handoff() -> None:
+    """The rewritten tree must reach the publish jobs (see test_workflows.py)."""
+    text = _text(PACKAGING_README)
+    assert "packaging-manifests" in text, (
+        "the README must explain that the publish jobs consume the rewritten artifact"
+    )
 
 
 def test_no_secrets_in_manifests() -> None:

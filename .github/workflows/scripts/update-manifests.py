@@ -11,9 +11,12 @@ real values of the tag being released:
 * ``packaging/scoop/stratum-memory.json`` - ``version``, the installer ``url``
   and its ``hash`` (the setup.exe),
 * ``packaging/winget/TotalBassJunkie.StratumMemory*.yaml`` - ``PackageVersion``
-  in all three manifests, plus ``InstallerUrl``/``InstallerSha256``/``ProductCode``,
+  in all three manifests, the locale ``ReleaseNotesUrl``, plus
+  ``InstallerUrl``/``InstallerSha256``. ``ProductCode`` is deliberately *not*
+  rewritten here: ``wingetcreate update`` fills it in from the built MSI.
 * ``packaging/chocolatey/stratum-memory.nuspec`` - ``version`` and
-  ``releaseNotes``, and ``chocolateyinstall.ps1`` - ``url64bit`` + ``checksum64``.
+  ``releaseNotes``, and ``tools/chocolateyinstall.ps1`` - ``url64bit`` +
+  ``checksum64``.
 
 The digest is read from ``dist/SHA256SUMS`` (the file the release job just
 generated and attached to the release), so every manifest points at exactly the
@@ -169,6 +172,16 @@ def update_winget(
                 lambda m: f"{m.group(1)}{sha}{m.group(2)}",
                 "winget InstallerSha256",
             )
+        if "ReleaseNotesUrl:" in text:
+            # Without this the locale manifest keeps pointing at the very first
+            # release for ever, because only wingetcreate touches the other
+            # fields and it does not rewrite ReleaseNotesUrl.
+            text = replace_once(
+                text,
+                r"^(\s*ReleaseNotesUrl:\s*).+$",
+                lambda m: f"{m.group(1)}{release_url(repo, version)}",
+                f"winget ReleaseNotesUrl in {name}",
+            )
         write(path, text)
 
 
@@ -196,7 +209,7 @@ def update_chocolatey(
     )
     write(nuspec, text)
 
-    install = directory / "chocolateyinstall.ps1"
+    install = directory / "tools" / "chocolateyinstall.ps1"
     text = install.read_text(encoding="utf-8")
     text = replace_once(
         text,

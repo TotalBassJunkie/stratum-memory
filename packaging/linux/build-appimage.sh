@@ -9,10 +9,11 @@
 #   3. downloads appimagetool (pinned release) and packs the AppDir.
 #
 # VERSION is *set by the CI* (from src/stratum/__init__.py, the version source
-# named in the contract); the fallback keeps a manual run working. appimagetool
-# is fetched from its official GitHub release because it cannot be installed via
-# a package manager; the download is HTTPS and the checksum-free release binary
-# is the upstream-published artefact.
+# named in the contract); there is deliberately no fallback, so a manual run
+# without VERSION stops instead of quietly building 0.1.0. appimagetool is
+# fetched from its official GitHub release because it cannot be installed via a
+# package manager; the download is HTTPS and the checksum-free release binary is
+# the upstream-published artefact.
 #
 # Usage:  VERSION=0.1.0 bash packaging/linux/build-appimage.sh
 set -eu
@@ -20,7 +21,7 @@ set -eu
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-VERSION="${VERSION:-0.1.0}"
+VERSION="${VERSION:?set VERSION (see release.yml)}"
 DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
 ARCH="${ARCH:-x86_64}"
 APPIMAGETOOL_URL="${APPIMAGETOOL_URL:-https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage}"

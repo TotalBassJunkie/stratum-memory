@@ -17,7 +17,7 @@ reflect touches (``jobs`` lock marker, ``memory_events`` watermark/journal,
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -129,7 +129,7 @@ class FakeDB:
                 }
             )
 
-    def __call__(self, _tenant: str) -> "FakeConnection":
+    def __call__(self, _tenant: str) -> FakeConnection:
         return FakeConnection(self)
 
     # -- introspection used by tests ---------------------------------------
@@ -313,7 +313,7 @@ class FakeDB:
                 "target_uri": target_uri,
                 "after": _unwrap(after),
                 "actor": actor,
-                "created_at": datetime.now(timezone.utc),
+                "created_at": datetime.now(UTC),
             }
         )
         return {"event_id": event_id}
@@ -327,7 +327,7 @@ class FakeDB:
 
 
 class FakeCursor:
-    def __init__(self, conn: "FakeConnection") -> None:
+    def __init__(self, conn: FakeConnection) -> None:
         self._conn = conn
         self._one: Any = None
         self._many: list[Any] = []
@@ -342,7 +342,7 @@ class FakeCursor:
     def fetchall(self) -> list[Any]:
         return list(self._many)
 
-    def __enter__(self) -> "FakeCursor":
+    def __enter__(self) -> FakeCursor:
         return self
 
     def __exit__(self, *exc: object) -> bool:
@@ -359,7 +359,7 @@ class FakeConnection:
     def commit(self) -> None:
         pass
 
-    def __enter__(self) -> "FakeConnection":
+    def __enter__(self) -> FakeConnection:
         return self
 
     def __exit__(self, *exc: object) -> bool:
@@ -368,7 +368,7 @@ class FakeConnection:
 
 # --------------------------------------------------------------------------- helpers
 
-NOW = datetime(2026, 10, 11, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 11, 12, 0, 0, tzinfo=UTC)
 
 
 def _fixed_clock() -> datetime:

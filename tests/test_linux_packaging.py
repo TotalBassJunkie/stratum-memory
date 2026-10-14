@@ -295,6 +295,24 @@ def test_snapcraft_pip_install_ignores_preinstalled_deb_packages() -> None:
     )
 
 
+def test_snapcraft_build_anchors_helper_paths_at_the_project_dir() -> None:
+    """Snapcraft's override-build CWD is not the repo root.
+
+    A relative `packaging/linux/stratum-launcher.sh` fails there with
+    "install: cannot stat ... No such file or directory"; the helpers must be
+    referenced via $SNAPCRAFT_PROJECT_DIR like the wheel path is.
+    """
+    text = SNAPCRAFT_YAML.read_text(encoding="utf-8")
+    build = text.split("override-build:", 1)[1]
+    assert "packaging/linux/stratum-launcher.sh" in build, "the launcher must be installed"
+    for helper in ("stratum-launcher.sh", "stratum.desktop"):
+        assert f"$SNAPCRAFT_PROJECT_DIR/packaging/linux/{helper}" in build, (
+            f"{helper} must be referenced via $SNAPCRAFT_PROJECT_DIR (CWD is not the repo root)"
+        )
+    assert "install -Dm0755 packaging/linux/" not in build, "no relative helper path may remain"
+    assert "install -Dm0644 packaging/linux/" not in build, "no relative helper path may remain"
+
+
 def test_snapcraft_yaml_keeps_build_and_stage_packages_consistent() -> None:
     """Both lists must exist and must not contradict the core24 choice."""
     config = _load_yaml(SNAPCRAFT_YAML)

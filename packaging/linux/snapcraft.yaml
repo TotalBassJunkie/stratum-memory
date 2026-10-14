@@ -78,9 +78,13 @@ parts:
       python3 -m pip install --no-cache-dir --ignore-installed \
           --prefix "$SNAPCRAFT_PART_INSTALL/usr" \
           "$SNAPCRAFT_PROJECT_DIR"/dist/stratum_memory-*-py3-none-any.whl
-      # The CLI launcher, exactly as the .deb/.rpm install it.
-      install -Dm0755 packaging/linux/stratum-launcher.sh "$SNAPCRAFT_PART_INSTALL/bin/stratum"
-      install -Dm0644 packaging/linux/stratum.desktop \
+      # The CLI launcher, exactly as the .deb/.rpm install it. Paths are anchored
+      # at $SNAPCRAFT_PROJECT_DIR: the override-build CWD is the unpacked part
+      # source, not the repo root, so a relative `packaging/...` path is not
+      # found ("install: cannot stat 'packaging/linux/stratum-launcher.sh'").
+      install -Dm0755 "$SNAPCRAFT_PROJECT_DIR/packaging/linux/stratum-launcher.sh" \
+          "$SNAPCRAFT_PART_INSTALL/bin/stratum"
+      install -Dm0644 "$SNAPCRAFT_PROJECT_DIR/packaging/linux/stratum.desktop" \
           "$SNAPCRAFT_PART_INSTALL/usr/share/applications/stratum.desktop"
     prime:
       - bin/stratum

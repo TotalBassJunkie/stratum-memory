@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Stratum-Memory</title>
+</head>
+<body>
+    <h3>What gets installed</h3>
+    <p>
+        The <code>stratum</code> command-line tool is installed to
+        <code>/usr/local/lib/stratum</code> and linked as
+        <code>/usr/local/bin/stratum</code>. Nothing else is changed and no
+        network request is made by the installer itself.
+    </p>
+
+    <h3>Requirements</h3>
+    <ul>
+        <li>macOS on Intel (x86_64) or Apple silicon (arm64)</li>
+        <li>Python 3.12 or newer (<code>brew install python@3.12</code>)</li>
+        <li>Docker Desktop &mdash; only for <code>stratum up</code> / <code>stratum install</code></li>
+    </ul>
+
+    <h3>Next steps</h3>
+    <pre>stratum install    # bootstrap the local stack (compose + .env, pull image)
+stratum up         # start the stack (docker compose up -d)
+stratum status     # container + health summary
+stratum doctor     # environment diagnostics</pre>
+
+    <h3>Other install channels</h3>
+    <pre>brew install TotalBassJunkie/stratum/stratum-memory
+curl -fsSL https://get.stratum.dev/install.sh | bash
+pipx install stratum-memory
+npm i -g stratum-memory</pre>
+</body>
+</html>

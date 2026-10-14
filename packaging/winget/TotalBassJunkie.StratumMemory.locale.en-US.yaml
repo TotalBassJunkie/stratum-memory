@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+#
+# Contract: docs/distribution.md. English (en-US) default locale for the winget
+# package TotalBassJunkie.StratumMemory.
+PackageIdentifier: TotalBassJunkie.StratumMemory
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: TotalBassJunkie
+PublisherUrl: https://github.com/TotalBassJunkie
+PublisherSupportUrl: https://github.com/TotalBassJunkie/stratum-memory/issues
+PackageName: Stratum-Memory
+PackageUrl: https://github.com/TotalBassJunkie/stratum-memory
+License: Apache-2.0
+LicenseUrl: https://github.com/TotalBassJunkie/stratum-memory/blob/main/LICENSE
+Copyright: Copyright (c) TotalBassJunkie
+ShortDescription: Unified AI memory and context system (4 layers, ECL ingestion, curator gate, MCP API).
+Description: |
+  Stratum-Memory is a unified AI memory and context system built on a single
+  namespace (stratum://<bereich>/<tenant>/<pfad>) over four layers: a
+  Git-versioned filesystem vault (L0-L2), a bi-temporal fact/entity graph, a
+  pgvector-backed vector and KV layer, and a budgeted reflect/synthesis worker.
+
+  An ECL ingestion pipeline (Extract -> Cognify -> Load) stages every candidate
+  and a curator validation gate is the only bridge into the active tables, so
+  nothing is promoted without review. The MCP-compatible tool API (write, query,
+  get, promote, archive, forget, link, session_append, reflect, health) is the
+  agent surface.
+
+  The `stratum` CLI bootstraps and drives the Docker stack (install, up, down,
+  status, logs, mcp, health, version, doctor).
+Moniker: stratum
+Tags:
+  - ai
+  - memory
+  - mcp
+  - cli
+  - knowledge-base
+  - postgres
+  - pgvector
+  - context
+ReleaseNotesUrl: https://github.com/TotalBassJunkie/stratum-memory/releases/tag/v0.1.0
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

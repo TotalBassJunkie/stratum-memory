@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Stratum-Memory : WiX v4 source for the per-machine Windows Installer (MSI).
+
+  This is the source behind the release asset `Stratum-<version>-x64.msi` fixed
+  by docs/distribution.md. It is compiled on the windows-latest runner by
+  packaging/windows/build-msi.ps1, which freezes the CLI with PyInstaller
+  (packaging/windows/stratum.spec) and then runs, with the version injected:
+
+      wix build -arch x64 -d Version=<version> -d ExePath=<abs>\stratum.exe
+          -d IconPath=<abs>\favicon.ico -o dist\Stratum-<version>-x64.msi
+          packaging/windows/stratum.wxs
+
+  Rules honoured here:
+
+  * The product version is NEVER hard-coded. It always arrives as the
+    preprocessor variable `Version` (set via `wix build -d Version=...`), and a
+    missing value is a hard build error (see the `ifndef` block below).
+  * `UpgradeCode` is a FIXED constant, documented in place. The ProductCode is
+    auto-generated per build, which is exactly what a major upgrade needs.
+  * The install is `perMachine` and lands in `%ProgramFiles%\Stratum`; it ships
+    a single file (`stratum.exe`), plus a PATH entry and one Start-menu shortcut.
+  * No WiX extension is required: everything below is core WiX.
+
+  Why `<Package>` and not `<Product>`: WiX v4 renamed the v3 `Product` element
+  to `Package` (WIP 5377). `UpgradeCode` remains a valid `Package` attribute,
+  so this file compiles unchanged on WiX v4 and later.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <!-- ==================================================================== -->
+  <!-- Injected variables                                                   -->
+  <!-- ==================================================================== -->
+
+  <!-- Set by the CI: `wix build -d Version=0.1.0 ...`. -->
+  <?ifndef Version ?>
+  <?error Version is not defined. Build with: wix build -d Version=<version> packaging/windows/stratum.wxs ?>
+  <?endif?>
+
+  <!--
+    Path of the PyInstaller one-file build. `$(sys.SOURCEFILEDIR)` is the
+    directory of this file, so the default resolves inside the repository no
+    matter which directory the build runs from. build-msi.ps1 overrides both
+    with absolute paths.
+  -->
+  <?ifndef ExePath ?>
+  <?define ExePath = "$(sys.SOURCEFILEDIR)..\..\dist\stratum.exe" ?>
+  <?endif?>
+
+  <?ifndef IconPath ?>
+  <?define IconPath = "$(sys.SOURCEFILEDIR)..\..\assets\logo\favicon.ico" ?>
+  <?endif?>
+
+  <!-- ==================================================================== -->
+  <!-- Package                                                              -->
+  <!-- ==================================================================== -->
+
+  <!--
+    `Manufacturer` is the ARP "Publisher" column, `Name` the ARP display name
+    and `Version` the ARP version. `Language` 1033 is the neutral English
+    (en-US) product language.
+  -->
+  <Package
+      Name="Stratum-Memory"
+      Manufacturer="TotalBassJunkie"
+      Version="$(var.Version)"
+      Language="1033"
+      Scope="perMachine"
+      Compressed="yes"
+      InstallerVersion="500"
+      UpgradeCode="E43D469E-E371-4B9E-829B-ABA11084070B">
+
+    <!--
+      ================================================================
+      UpgradeCode: FIXED VALUE - never regenerate, never reuse elsewhere.
+      ================================================================
+      E43D469E-E371-4B9E-829B-ABA11084070B identifies "Stratum-Memory" to
+      Windows Installer for the lifetime of the product. Every release ships
+      the SAME value while `ProductCode` is auto-generated per build, which is
+      what lets Windows Installer recognise a newer package as an upgrade of an
+      already installed one.
+
+      Changing this GUID would silently turn every future release into an
+      unrelated product: Windows would keep both versions installed side by
+      side instead of replacing the old one. It is therefore a repository
+      constant, not a per-build value.
+    -->
+
+    <!-- Replace an older Stratum-Memory with this one, and refuse downgrades. -->
+    <MajorUpgrade
+        AllowDowngrades="no"
+        DowngradeErrorMessage="A newer version of [ProductName] is already installed. Setup will now exit."
+        Schedule="afterInstallValidate" />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- ================================================================== -->
+    <!-- ARP (Programs and Features) entries                                -->
+    <!-- ================================================================== -->
+
+    <!-- Icon shown next to the entry in Programs and Features. -->
+    <Icon Id="StratumIcon" SourceFile="$(IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="StratumIcon" />
+
+    <!-- License note. The full Apache-2.0 text ships as ./LICENSE in the repo. -->
+    <Property Id="ARPCOMMENTS" Value="Stratum-Memory, licensed under Apache-2.0 (see LICENSE in the repository)." />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/TotalBassJunkie/stratum-memory" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/TotalBassJunkie/stratum-memory/issues" />
+    <Property Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" />
+
+    <!--
+      Optional license agreement for the UI: pass `-d LicenseRtf=<path to a
+      .rtf>` and the standard WixUILicenseRtf variable is authored. Omitted by
+      default so a build never depends on an .rtf that may not exist.
+    -->
+    <?ifdef LicenseRtf ?>
+    <WixVariable Id="WixUILicenseRtf" Value="$(LicenseRtf)" />
+    <?endif?>
+
+    <Feature
+        Id="MainFeature"
+        Title="Stratum-Memory CLI"
+        Description="The 'stratum' command-line interface (one-file build)."
+        Level="1">
+      <ComponentGroupRef Id="StratumCliComponents" />
+    </Feature>
+  </Package>
+
+  <!-- ==================================================================== -->
+  <!-- Directories                                                          -->
+  <!-- ==================================================================== -->
+
+  <Fragment>
+    <!--
+      `ProgramFiles64Folder` requires the package to be built with `-arch x64`
+      (build-msi.ps1 does), which matches the `x64` in the asset name.
+    -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Stratum" />
+    </StandardDirectory>
+
+    <!-- Own Start-menu folder, so uninstall can remove it without touching the
+         shared ProgramMenuFolder. -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="StratumMenuFolder" Name="Stratum-Memory" />
+    </StandardDirectory>
+  </Fragment>
+
+  <!-- ==================================================================== -->
+  <!-- Files, PATH entry, shortcut                                          -->
+  <!-- ==================================================================== -->
+
+  <Fragment>
+    <ComponentGroup Id="StratumCliComponents">
+      <Component
+          Id="StratumCliComponent"
+          Directory="INSTALLFOLDER"
+          Guid="77D9724A-625E-44E4-8EF1-175C720215C1">
+
+        <!-- The PyInstaller one-file build installs as `stratum.exe`. It is the
+             component's key path, so Windows Installer can repair/replace it. -->
+        <File Id="StratumExe" Source="$(ExePath)" KeyPath="yes" />
+
+        <!--
+          Put the install directory on the *machine* PATH (`System="yes"` goes
+          with the perMachine scope). `Part="last"` appends, `Action="set"`
+          creates the variable when it does not exist yet, and the entry is
+          removed again on uninstall (`Permanent="no"`).
+        -->
+        <Environment
+            Id="StratumPathEntry"
+            Name="PATH"
+            Value="[INSTALLFOLDER]"
+            Part="last"
+            Action="set"
+            System="yes"
+            Permanent="no" />
+
+        <!-- Start-menu shortcut pointing at the installed executable. -->
+        <Shortcut
+            Id="StratumStartMenuShortcut"
+            Directory="StratumMenuFolder"
+            Name="Stratum-Memory"
+            Description="Stratum-Memory command-line interface"
+            Target="[#StratumExe]"
+            WorkingDirectory="INSTALLFOLDER" />
+
+        <!-- Clean uninstall: drop the Start-menu folder and the install folder
+             once they are empty. -->
+        <RemoveFolder Id="RemoveStratumMenuFolder" Directory="StratumMenuFolder" On="uninstall" />
+        <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+</Wix>

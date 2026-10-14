@@ -1,0 +1,70 @@
+# snapcraft.yaml — the Snap channel for Stratum-Memory.
+#
+# Contract: docs/distribution.md lists the snap asset as
+#   stratum_<version>_amd64.snap
+# built by snapcraft on the ubuntu runner. Snapcraft derives the output file
+# name from `name`, so the CI renames the produced
+#   stratum-memory_<version>_amd64.snap
+# to the contract name `stratum_${VERSION}_amd64.snap` before uploading it to
+# the GitHub Release (see packaging/linux/README.md).
+#
+# ${VERSION} is a placeholder *set by the CI* (from src/stratum/__init__.py, the
+# version source named in the contract): the workflow substitutes it — or
+# exports it and lets snapcraft read it — before running `snapcraft`.
+name: stratum-memory
+base: core22
+version: "${VERSION}"
+summary: Unified AI memory and context system
+description: |
+  Stratum-Memory is a four-layer AI memory and context system (raw -> summary ->
+  distilled -> insight) with ECL ingestion, a curator gate, a graph/vector query
+  API and an MCP server.
+
+  The snap ships the `stratum` CLI, which bootstraps and drives the local Docker
+  stack (`stratum install`, `stratum up`, `stratum status`, `stratum mcp`,
+  `stratum health`, `stratum doctor`). The stack commands shell out to
+  `docker compose` and need the `docker` plug connected.
+grade: stable
+confinement: strict
+license: Apache-2.0
+contact: https://github.com/TotalBassJunkie/stratum-memory
+issues: https://github.com/TotalBassJunkie/stratum-memory/issues
+website: https://github.com/TotalBassJunkie/stratum-memory
+architectures:
+  - build-on: amd64
+    build-for: amd64
+
+apps:
+  stratum:
+    command: bin/stratum
+    # `stratum install`/`up`/`down` talk to the Docker socket and fetch the
+    # image; `mcp`/`health` reach a configured database.
+    plugs:
+      - network
+      - network-bind
+      - home
+      - docker
+
+parts:
+  stratum-memory:
+    plugin: nil
+    source: ../..
+    build-packages:
+      - python3
+      - python3-pip
+    stage-packages:
+      - python3
+    override-build: |
+      set -eu
+      # Install the wheel built by the release workflow into the snap payload.
+      python3 -m pip install --no-cache-dir --prefix "$SNAPCRAFT_PART_INSTALL/usr" \
+          "$SNAPCRAFT_PROJECT_DIR"/dist/stratum-*-py3-none-any.whl
+      # The CLI launcher, exactly as the .deb/.rpm install it.
+      install -Dm0755 packaging/linux/stratum-launcher.sh "$SNAPCRAFT_PART_INSTALL/bin/stratum"
+      install -Dm0644 packaging/linux/stratum.desktop \
+          "$SNAPCRAFT_PART_INSTALL/usr/share/applications/stratum.desktop"
+    prime:
+      - bin/stratum
+      - usr/lib/python3
+      - usr/lib/python3.10
+      - usr/share/applications

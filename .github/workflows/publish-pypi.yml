@@ -1,0 +1,125 @@
+# ---------------------------------------------------------------------------
+# Stratum-Memory - publish the Python distributions to PyPI, on demand.
+#
+# This workflow is separate from release.yml on purpose: `release.yml` runs it
+# automatically when PyPI credentials exist, and this one lets a human publish
+# (or re-publish) a version without cutting a new tag. Both use the same two
+# credential paths, in this order of preference:
+#
+#   1. PyPI **trusted publishing** (OIDC) - no long-lived secret at all. It
+#      needs `permissions: id-token: write` and a trusted publisher configured
+#      on PyPI for this repository + workflow file (see docs/distribution.md).
+#   2. the `PYPI_TOKEN` repository secret (an API token), used only when set.
+#
+# How to run it: Actions -> "Publish to PyPI" -> Run workflow. Leave `version`
+# empty to publish whatever `src/stratum/__init__.py` currently says, or type a
+# version to have it checked against `__version__` first (a mismatch stops the
+# run, so a typo can never publish the wrong number).
+#
+# Nothing here needs a database; the job only builds and uploads.
+# ---------------------------------------------------------------------------
+name: Publish to PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Version to publish, without the leading "v". Leave empty to use
+          __version__ from src/stratum/__init__.py.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-pypi
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Trusted publishing (OIDC) needs this; the token path does not use it.
+      id-token: write
+    env:
+      # Lifted into the job env because `secrets` may not be read in an `if:`.
+      # An unset secret is the empty string.
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+      INPUT_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve and check the version
+        id: version
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import sys
+
+          init = pathlib.Path("src/stratum/__init__.py")
+          match = re.search(
+              r'^__version__\s*=\s*"([^"]+)"', init.read_text(encoding="utf-8"), re.MULTILINE
+          )
+          if not match:
+              sys.exit(f"could not read __version__ from {init}")
+          version = match.group(1)
+
+          requested = os.environ.get("INPUT_VERSION", "").strip()
+          requested = requested[1:] if requested.startswith("v") else requested
+          if requested and requested != version:
+              sys.exit(f"input version {requested!r} != __version__ {version!r}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"version={version}\n")
+          print(f"publishing {version}")
+          PY
+
+      - name: Build the wheel and the sdist
+        run: python -m pip install --upgrade build && python -m build
+
+      - name: Check the contract asset names
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          test -f "dist/stratum-${VERSION}-py3-none-any.whl"
+          test -f "dist/stratum-${VERSION}.tar.gz"
+          ls -l dist
+
+      - name: Upload the distributions as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Skip (no PyPI credentials configured)
+        if: ${{ env.PYPI_TOKEN == '' }}
+        run: |
+          echo "::notice::PYPI_TOKEN is not set; expecting trusted publishing (OIDC) to be configured on PyPI."
+
+      # Preferred: OIDC, no secret in the repository.
+      - name: Publish with trusted publishing (OIDC)
+        if: ${{ env.PYPI_TOKEN == '' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+
+      # Fallback: an API token stored as the PYPI_TOKEN secret.
+      - name: Publish with the PYPI_TOKEN secret
+        if: ${{ env.PYPI_TOKEN != '' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          password: ${{ env.PYPI_TOKEN }}

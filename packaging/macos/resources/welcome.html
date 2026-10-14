@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Install Stratum-Memory</title>
+</head>
+<body>
+    <h2>Stratum-Memory</h2>
+    <p>
+        This installer places the <code>stratum</code> command-line tool on your
+        Mac:
+    </p>
+    <ul>
+        <li><code>/usr/local/lib/stratum</code> &mdash; the CLI and its runtime</li>
+        <li><code>/usr/local/bin/stratum</code> &mdash; the launcher on your <code>PATH</code></li>
+    </ul>
+    <p>
+        The CLI needs <strong>Python 3.12 or newer</strong> at runtime. If it is
+        missing, install it first:
+    </p>
+    <pre>brew install python@3.12</pre>
+    <p>
+        This installer only adds the CLI. The Docker stack (Postgres + pgvector)
+        is bootstrapped afterwards by running <code>stratum install</code>.
+    </p>
+</body>
+</html>

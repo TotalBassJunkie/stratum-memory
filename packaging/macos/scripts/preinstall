@@ -1,0 +1,56 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+# Stratum-Memory - .pkg preinstall script (POSIX sh).
+#
+# Runs as root before the payload is laid down. It only *checks* the machine
+# and never touches the network. A non-zero exit aborts the installation.
+#
+#   - the target volume must be writable
+#   - a Python >= 3.12 must be reachable (the CLI needs it at runtime)
+#
+# `stratum` itself is installed and linked by scripts/postinstall.
+# ---------------------------------------------------------------------------
+
+set -eu
+
+LAUNCHER="/usr/local/bin/stratum"
+MIN_PYTHON="3.12"
+
+log() { printf '%s\n' "$*"; }
+warn() { printf 'warning: %s\n' "$*" >&2; }
+
+# ------------------------------------------------------------ target volume --
+TARGET_VOLUME="${2:-/}"
+if [ ! -w "$TARGET_VOLUME" ]; then
+    printf 'error: target volume %s is not writable\n' "$TARGET_VOLUME" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------- python -----
+find_python() {
+    for candidate in python3 python; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            if "$candidate" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)" >/dev/null 2>&1; then
+                printf '%s\n' "$candidate"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+PYTHON="$(find_python || true)"
+if [ -z "$PYTHON" ]; then
+    warn "no Python >= $MIN_PYTHON found on PATH."
+    warn "the 'stratum' CLI will be installed but needs Python >= $MIN_PYTHON at runtime."
+    warn "install it with:  brew install python@3.12"
+else
+    log "found $PYTHON ($("$PYTHON" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null || printf 'unknown'))"
+fi
+
+# ------------------------------------------------- existing install check ----
+if [ -e "$LAUNCHER" ] && [ ! -L "$LAUNCHER" ]; then
+    log "replacing existing $LAUNCHER (the installer manages this file)"
+fi
+
+exit 0

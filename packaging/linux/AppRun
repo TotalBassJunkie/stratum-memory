@@ -1,0 +1,16 @@
+#!/bin/sh
+# AppRun — the AppImage entry point.
+#
+# appimagetool executes this file when the AppImage is started. The AppImage
+# runtime mounts the payload at $APPDIR, so every path below is resolved
+# relative to it rather than to the host.
+set -eu
+
+HERE="$(dirname "$(readlink -f "$0")")"
+export APPDIR="${APPDIR:-$HERE}"
+
+# The bundled Python package and the CLI launcher live inside the AppDir.
+export PATH="$APPDIR/usr/bin:$PATH"
+export PYTHONPATH="$APPDIR/usr/lib/stratum-memory${PYTHONPATH:+:$PYTHONPATH}"
+
+exec "$APPDIR/usr/bin/stratum" "$@"

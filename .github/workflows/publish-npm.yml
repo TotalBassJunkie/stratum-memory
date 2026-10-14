@@ -1,0 +1,109 @@
+# ---------------------------------------------------------------------------
+# Stratum-Memory - publish the npm wrapper package, on demand.
+#
+# The npm package (`npm/package.json`, name `stratum-memory`) is a thin wrapper
+# around the Python CLI (npm/bin/stratum.js). Publishing it is independent of
+# the installers, so it has its own workflow; `release.yml` also calls npm when
+# the `NPM_TOKEN` secret exists.
+#
+# Authentication: the `NPM_TOKEN` repository secret, passed to npm as
+# `NODE_AUTH_TOKEN` through setup-node's registry-url. Without the secret the
+# job stops with a clear message instead of failing halfway.
+#
+# How to run it: Actions -> "Publish to npm" -> Run workflow. `version` defaults
+# to `__version__` from src/stratum/__init__.py; a mismatch stops the run. The
+# package version is written into npm/package.json for the publish only
+# (`--no-git-tag-version`), so the committed manifest keeps the placeholder.
+# ---------------------------------------------------------------------------
+name: Publish to npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Version to publish, without the leading "v". Leave empty to use
+          __version__ from src/stratum/__init__.py.
+        required: false
+        type: string
+      tag:
+        description: npm dist-tag to publish under (e.g. latest, next).
+        required: false
+        default: latest
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish stratum-memory
+    runs-on: ubuntu-latest
+    env:
+      # Lifted into the job env: `secrets` is not readable in an `if:`.
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      INPUT_VERSION: ${{ inputs.version }}
+      INPUT_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python (to read the version source)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Resolve and check the version
+        id: version
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import sys
+
+          init = pathlib.Path("src/stratum/__init__.py")
+          match = re.search(
+              r'^__version__\s*=\s*"([^"]+)"', init.read_text(encoding="utf-8"), re.MULTILINE
+          )
+          if not match:
+              sys.exit(f"could not read __version__ from {init}")
+          version = match.group(1)
+
+          requested = os.environ.get("INPUT_VERSION", "").strip()
+          requested = requested[1:] if requested.startswith("v") else requested
+          if requested and requested != version:
+              sys.exit(f"input version {requested!r} != __version__ {version!r}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"version={version}\n")
+          print(f"publishing {version}")
+          PY
+
+      - name: Show the package that would be published
+        working-directory: npm
+        run: npm pack --dry-run
+
+      - name: Fail early when no npm token is configured
+        if: ${{ env.NPM_TOKEN == '' }}
+        run: |
+          echo "::error::NPM_TOKEN is not set. Add it under Settings -> Secrets and variables -> Actions."
+          exit 1
+
+      - name: Publish to npm
+        working-directory: npm
+        env:
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+        run: |
+          npm version "${{ steps.version.outputs.version }}" --no-git-tag-version --allow-same-version
+          npm publish --access public --tag "${{ env.INPUT_TAG }}"

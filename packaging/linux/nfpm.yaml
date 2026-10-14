@@ -1,0 +1,61 @@
+# nFPM configuration — one file, two packages (.deb and .rpm).
+#
+# Contract: docs/distribution.md ("Release assets"). The CI on ubuntu-latest
+# produces, from this file:
+#   dist/stratum_${VERSION}_amd64.deb
+#   dist/stratum-${VERSION}-1.x86_64.rpm
+#
+# ${VERSION} and ${ARCH} are placeholders expanded by nFPM from the environment.
+# The CI sets them on a version tag: VERSION comes from the version source named
+# in docs/distribution.md (src/stratum/__init__.py, __version__), and
+# packaging/linux/build-deb-rpm.sh sets ARCH=amd64 for the .deb and ARCH=x86_64
+# for the .rpm. There is deliberately no hard-coded version in this file.
+name: stratum-memory
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: utils
+priority: optional
+maintainer: Stratum-Memory maintainers <maintainers@stratum.dev>
+vendor: Stratum-Memory
+homepage: https://github.com/TotalBassJunkie/stratum-memory
+license: Apache-2.0
+description: |
+  Stratum-Memory — unified AI memory and context system.
+
+  A four-layer memory store (raw -> summary -> distilled -> insight) with ECL
+  ingestion, a curator gate, a graph/vector query API and an MCP server.
+
+  This package installs the `stratum` CLI, which bootstraps and drives the
+  local Docker stack (`stratum install`, `stratum up`, `stratum status`,
+  `stratum mcp`, `stratum health`, `stratum doctor`). Docker is required for
+  the stack commands; `stratum version` and `stratum mcp` work without it.
+
+  The Python package itself is installed from PyPI (`pipx install stratum-memory`)
+  or shipped as the release wheel; this package wires the CLI onto PATH.
+# Runtime requirement, kept in sync with pyproject.toml (requires-python = ">=3.12").
+depends:
+  - python3 >= 3.12
+
+# Packager-specific syntax for the same dependency (Debian wants parentheses).
+overrides:
+  deb:
+    depends:
+      - python3 (>= 3.12)
+  rpm:
+    depends:
+      - python3 >= 3.12
+
+contents:
+  # The CLI entry point: /usr/bin/stratum runs `python3 -m stratum.cli "$@"`.
+  - src: ./packaging/linux/stratum-launcher.sh
+    dst: /usr/bin/stratum
+    file_info:
+      mode: 0755
+  # Documentation, per the task contract.
+  - src: ./README.md
+    dst: /usr/share/doc/stratum-memory/README.md
+  - src: ./docs/distribution.md
+    dst: /usr/share/doc/stratum-memory/distribution.md
+  - src: ./LICENSE
+    dst: /usr/share/doc/stratum-memory/LICENSE

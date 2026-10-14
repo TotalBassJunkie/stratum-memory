@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Stratum Memory
+GenericName=AI memory and context system
+Comment=Unified AI memory and context system (4 layers, MCP API)
+Exec=stratum
+Icon=stratum
+Terminal=true
+Categories=Utility;Development;
+Keywords=memory;ai;mcp;context;knowledge;
+StartupNotify=false

@@ -1,0 +1,107 @@
+# ---------------------------------------------------------------------------
+# Stratum-Memory - continuous integration.
+#
+# Runs on every pull request and on every push to `main`. It is the fast gate
+# that must be green before anything is merged or tagged:
+#
+#   * ruff                - the lint rules selected in pyproject.toml
+#   * pytest              - the DB-free suite (`-m "not integration"`)
+#   * docker build        - a smoke test that the image in Dockerfile still builds
+#                           (no push: publishing is release.yml / publish-container.yml)
+#   * installer syntax    - `bash -n install.sh` and the PowerShell language parser
+#                           on install.ps1, so a broken one-liner is caught here
+#                           instead of by a user
+#
+# No secret is needed and no step writes anything outside the runner.
+# ---------------------------------------------------------------------------
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+# Least privilege: CI only reads the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ruff
+        run: python -m pip install --upgrade ruff
+
+      - name: Lint
+        run: python -m ruff check src tests
+
+  tests:
+    name: pytest (not integration)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install the package with its dev extras
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+
+      - name: Run the DB-free test suite
+        run: python -m pytest -m "not integration" -q
+
+  docker:
+    name: docker build (smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Build only - the image is published by release.yml / publish-container.yml.
+      - name: Build the image
+        run: docker build -t stratum-memory:ci .
+
+      - name: Smoke test the image
+        run: docker run --rm stratum-memory:ci stratum version
+
+  installers:
+    name: installer syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check install.sh with bash -n
+        run: bash -n install.sh
+
+      - name: Parse install.ps1 with the PowerShell language parser
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $env:GITHUB_WORKSPACE "install.ps1"), [ref]$tokens, [ref]$errors)
+          if (@($errors).Count -gt 0) {
+            @($errors) | ForEach-Object { Write-Output $_.Message }
+            exit 1
+          }
+          Write-Output "install.ps1 parses"

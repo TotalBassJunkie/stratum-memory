@@ -23,6 +23,44 @@ curator validation gate, and an MCP-compatible agent tool API. Runs in Docker
 identically on a Raspberry Pi 4 (8 GB) and on a multi-tenant server. License:
 Apache-2.0.
 
+> **Installation:** alle Wege für Windows, Linux und macOS (winget, Scoop,
+> Homebrew, .deb/.rpm, .pkg/.dmg, pipx, Docker …) stehen in
+> **[`docs/install.md`](docs/install.md)** — die drei kürzesten direkt darunter.
+
+## Installation
+
+Ein Befehl installiert das `stratum`-CLI; den Server-Stack holt danach
+`stratum install` + `stratum up` (braucht Docker):
+
+```bash
+# Linux / macOS
+curl -fsSL https://get.stratum.dev/install.sh | bash
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://get.stratum.dev/install.ps1 | iex
+```
+
+```bash
+# Überall mit Python >= 3.12
+pipx install stratum-memory
+```
+
+Danach:
+
+```bash
+stratum install   # Compose-Datei + .env + secrets/ schreiben, Image ziehen
+stratum up        # Stack starten (docker compose up -d)
+stratum status    # Container + Health
+```
+
+Jeder weitere Kanal (winget `TotalBassJunkie.StratumMemory`, Scoop, npm,
+Chocolatey, MSI/EXE, .deb/.rpm, AppImage, Snap, Homebrew, .pkg/.dmg, Docker),
+die Kanal-mal-Betriebssystem-Matrix, die Voraussetzungen und die Deinstallation
+pro Kanal: **[`docs/install.md`](docs/install.md)**. Der Vertrag hinter den
+Namen und Release-Assets steht in `docs/distribution.md`.
+
 ## Architecture at a glance
 
 One unified namespace — `stratum://<bereich>/<tenant>/<pfad>` — over four layers:

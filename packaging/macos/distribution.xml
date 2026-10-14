@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Stratum-Memory - productbuild distribution for the macOS .pkg installer.
+
+  build-pkg.sh substitutes the placeholders with `sed` before it calls
+  productbuild (productbuild does not expand them itself):
+
+    __VERSION__     the release version the CI exports (read from
+                    src/stratum/__init__.py, `__version__`) - never hardcoded
+    __IDENTIFIER__  the component package identifier
+                    (dev.stratum.stratum-memory)
+
+  The welcome/readme pages are passed to productbuild via the resources option
+  and live next to this file in packaging/macos/resources/.
+-->
+<installer-gui-script minSpecVersion="2">
+    <title>Stratum-Memory</title>
+    <organization>dev.stratum</organization>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+    <options
+        customize="never"
+        hostArchitectures="x86_64,arm64"
+        require-scripts="false"
+        rootVolumeOnly="true"/>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <readme file="readme.html" mime-type="text/html"/>
+    <choices-outline>
+        <line choice="default">
+            <line choice="__IDENTIFIER__"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="__IDENTIFIER__" title="Stratum-Memory CLI" visible="false">
+        <pkg-ref id="__IDENTIFIER__"/>
+    </choice>
+    <pkg-ref id="__IDENTIFIER__" version="__VERSION__" onConclusion="none">#__IDENTIFIER__.pkg</pkg-ref>
+</installer-gui-script>

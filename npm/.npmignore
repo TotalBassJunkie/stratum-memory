@@ -1,0 +1,8 @@
+# Belt-and-braces: `files` in package.json already whitelists bin/ + README.md.
+tests/
+test/
+node_modules/
+*.log
+.DS_Store
+.env
+.env.*

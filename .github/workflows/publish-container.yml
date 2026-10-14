@@ -1,0 +1,121 @@
+# ---------------------------------------------------------------------------
+# Stratum-Memory - build and push the container image, on demand.
+#
+# The image is `ghcr.io/totalbassjunkie/stratum-memory` (docs/distribution.md),
+# built from the Dockerfile in the repository root. `release.yml` pushes
+# `:<version>` and `:latest` for every tag; this workflow is the manual handle
+# for the same job (e.g. to refresh `:latest` after a documentation-only change
+# or to publish a rebuild of an existing tag).
+#
+# Authentication: the default `GITHUB_TOKEN` - no secret to configure. The
+# `packages: write` permission is what lets it push to GHCR; nothing else is
+# granted.
+#
+# How to run it: Actions -> "Publish container image" -> Run workflow. Leave
+# `version` empty to use `__version__` from src/stratum/__init__.py.
+# ---------------------------------------------------------------------------
+name: Publish container image
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Image tag to publish, without the leading "v". Leave empty to use
+          __version__ from src/stratum/__init__.py.
+        required: false
+        type: string
+      push_latest:
+        description: Also move the `latest` tag to this build.
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-container
+  cancel-in-progress: false
+
+env:
+  GHCR_IMAGE: ghcr.io/totalbassjunkie/stratum-memory
+
+jobs:
+  publish:
+    name: Build and push to GHCR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python (to read the version source)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve and check the version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import sys
+
+          init = pathlib.Path("src/stratum/__init__.py")
+          match = re.search(
+              r'^__version__\s*=\s*"([^"]+)"', init.read_text(encoding="utf-8"), re.MULTILINE
+          )
+          if not match:
+              sys.exit(f"could not read __version__ from {init}")
+          version = match.group(1)
+
+          requested = os.environ.get("INPUT_VERSION", "").strip()
+          requested = requested[1:] if requested.startswith("v") else requested
+          if requested and requested != version:
+              sys.exit(f"input version {requested!r} != __version__ {version!r}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"version={version}\n")
+          print(f"publishing {version}")
+          PY
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the image
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          image="${GHCR_IMAGE,,}"
+          docker build -t "${image}:${VERSION}" .
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            docker tag "${image}:${VERSION}" "${image}:latest"
+          fi
+
+      - name: Smoke test the image
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          image="${GHCR_IMAGE,,}"
+          docker run --rm "${image}:${VERSION}" stratum version
+
+      - name: Push the image
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          image="${GHCR_IMAGE,,}"
+          docker push "${image}:${VERSION}"
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            docker push "${image}:latest"
+          fi

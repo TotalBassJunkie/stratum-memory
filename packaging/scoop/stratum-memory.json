@@ -1,0 +1,30 @@
+{
+    "$schema": "https://raw.githubusercontent.com/ScoopInstaller/Scoop/master/schema.json",
+    "version": "0.1.0",
+    "description": "Unified AI memory and context system (4 layers, ECL ingestion, curator gate, MCP API).",
+    "homepage": "https://github.com/TotalBassJunkie/stratum-memory",
+    "license": "Apache-2.0",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/TotalBassJunkie/stratum-memory/releases/download/v0.1.0/Stratum-0.1.0-setup.exe",
+            "hash": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+    },
+    "innosetup": true,
+    "bin": [
+        ["stratum.exe", "stratum"]
+    ],
+    "checkver": {
+        "github": "https://github.com/TotalBassJunkie/stratum-memory"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/TotalBassJunkie/stratum-memory/releases/download/v$version/Stratum-$version-setup.exe"
+            }
+        },
+        "hash": {
+            "url": "$baseurl/SHA256SUMS"
+        }
+    }
+}

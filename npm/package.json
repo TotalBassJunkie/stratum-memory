@@ -1,0 +1,33 @@
+{
+  "name": "stratum-memory",
+  "version": "0.1.0",
+  "description": "Stratum-Memory: unified AI memory and context system (4 layers, ECL ingestion, curator gate, MCP API). This npm package is a thin wrapper around the Python CLI.",
+  "license": "Apache-2.0",
+  "bin": {
+    "stratum": "bin/stratum.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin/",
+    "README.md"
+  ],
+  "repository": "https://github.com/TotalBassJunkie/stratum-memory",
+  "homepage": "https://github.com/TotalBassJunkie/stratum-memory#readme",
+  "bugs": {
+    "url": "https://github.com/TotalBassJunkie/stratum-memory/issues"
+  },
+  "keywords": [
+    "stratum",
+    "stratum-memory",
+    "ai-memory",
+    "agent-memory",
+    "context",
+    "mcp",
+    "mcp-server",
+    "knowledge-graph",
+    "pgvector",
+    "cli"
+  ]
+}

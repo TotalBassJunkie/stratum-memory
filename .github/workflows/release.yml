@@ -1,0 +1,715 @@
+# ---------------------------------------------------------------------------
+# Stratum-Memory - the release workflow.
+#
+# Contract: docs/distribution.md. A push of a `v<version>` tag (or a manual
+# `workflow_dispatch` with the `version` input) builds every installer named in
+# the contract's "Release assets" table and attaches it to the GitHub Release:
+#
+#   stratum-<version>-py3-none-any.whl        python-dist      (ubuntu-latest)
+#   stratum-<version>.tar.gz                  python-dist      (ubuntu-latest)
+#   stratum_<version>_amd64.deb               linux-packages   (ubuntu-latest, nFPM)
+#   stratum-<version>-1.x86_64.rpm            linux-packages   (ubuntu-latest, nFPM)
+#   Stratum-<version>-x86_64.AppImage         linux-packages   (ubuntu-latest, appimagetool)
+#   stratum_<version>_amd64.snap              linux-packages   (ubuntu-latest, snapcraft)
+#   Stratum-<version>-x64.msi                 windows-installers (windows-latest, WiX v4)
+#   Stratum-<version>-setup.exe               windows-installers (windows-latest, Inno Setup)
+#   Stratum-<version>-x86_64.pkg              macos-installers (macos-latest, pkgbuild/productbuild)
+#   Stratum-<version>-x86_64.dmg              macos-installers (macos-latest, hdiutil)
+#   SHA256SUMS                                release          (checksums for all of the above)
+#
+# The version is NEVER hard-coded: it comes from src/stratum/__init__.py
+# (`__version__`, the single source of truth named in the contract), is checked
+# against the tag by the `version` job, and reaches every packaging script
+# through the environment (`VERSION`) or a parameter (`-Version`).
+#
+# Two channels are mandatory and need no extra secret: the GitHub Release (with
+# all the assets) and the container image on GHCR, both authenticated with the
+# default `GITHUB_TOKEN`. Everything else is optional and secret-gated:
+#
+#   * publish-pypi      - PyPI trusted publishing (OIDC, preferred) or PYPI_TOKEN
+#   * publish-npm       - npm (NPM_TOKEN)
+#   * publish-homebrew  - pushes the formula to the homebrew-stratum tap (TAP_GITHUB_TOKEN)
+#   * publish-scoop     - pushes the manifest to the scoop-stratum bucket (TAP_GITHUB_TOKEN)
+#   * publish-winget    - opens the manifest PR against microsoft/winget-pkgs (WINGET_TOKEN)
+#   * publish-chocolatey- pushes the package to the Chocolatey community feed (CHOCOLATEY_API_KEY)
+#
+# A missing secret only skips its channel: no publish job is in the `needs` of
+# `release`, so the GitHub Release and the container image are never blocked by
+# an optional channel (docs/distribution.md, "What needs a one-time human step").
+#
+# SECURITY: the `secrets` context is deliberately NOT read in any `if:`
+# condition (GitHub rejects that at parse time). Every gate lifts its secret
+# into a job-level `env:` - where the `secrets` context is allowed - and tests
+# `env.<NAME> != ''`. An unset secret is an empty string.
+# ---------------------------------------------------------------------------
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Version to release, without the leading "v" (must match __version__ in
+          src/stratum/__init__.py). Used when the workflow is dispatched from a
+          branch instead of a tag push.
+        required: false
+        type: string
+
+# Least privilege at the top level; each job widens it only where it must.
+permissions:
+  contents: read
+
+# Never run two releases for the same tag at once.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # =========================================================================
+  # version - the single source of truth, checked against the tag.
+  # =========================================================================
+  version:
+    name: Resolve and check the version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Read __version__ and check it against the tag
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import sys
+
+          init = pathlib.Path("src/stratum/__init__.py")
+          match = re.search(
+              r'^__version__\s*=\s*"([^"]+)"', init.read_text(encoding="utf-8"), re.MULTILINE
+          )
+          if not match:
+              sys.exit(f"could not read __version__ from {init}")
+          version = match.group(1)
+
+          requested = os.environ.get("INPUT_VERSION", "").strip()
+          requested = requested[1:] if requested.startswith("v") else requested
+          if requested and requested != version:
+              sys.exit(f"workflow input version {requested!r} != __version__ {version!r}")
+
+          if os.environ["GITHUB_REF_TYPE"] == "tag":
+              tag = os.environ["GITHUB_REF_NAME"]
+              tag_version = tag[1:] if tag.startswith("v") else tag
+              if tag_version != version:
+                  sys.exit(f"tag {tag!r} does not match __version__ {version!r}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"version={version}\n")
+              handle.write(f"tag=v{version}\n")
+          print(f"version: {version}")
+          PY
+
+  # =========================================================================
+  # python-dist - the wheel and the sdist (the base of every other channel).
+  # =========================================================================
+  python-dist:
+    name: Python wheel and sdist
+    runs-on: ubuntu-latest
+    needs: version
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build
+        run: python -m pip install --upgrade build
+
+      - name: Build the wheel and the sdist
+        run: python -m build
+
+      - name: Check the contract asset names
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          test -f "dist/stratum-${VERSION}-py3-none-any.whl"
+          test -f "dist/stratum-${VERSION}.tar.gz"
+          ls -l dist
+
+      - name: Upload the Python distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/*
+          if-no-files-found: error
+
+  # =========================================================================
+  # linux-packages - .deb + .rpm (nFPM), AppImage, Snap.
+  # =========================================================================
+  linux-packages:
+    name: Linux packages (deb, rpm, AppImage, snap)
+    runs-on: ubuntu-latest
+    needs: version
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the build dependencies
+        run: |
+          python -m pip install --upgrade build
+          sudo apt-get update
+          # `snap` is preinstalled on the ubuntu runners; this is a no-op there
+          # but keeps the job working on a minimal image.
+          sudo apt-get install -y --no-install-recommends rpm file snapd
+          curl -fsSL -o /tmp/nfpm.tar.gz \
+            "https://github.com/goreleaser/nfpm/releases/download/v2.48.0/nfpm_2.48.0_Linux_x86_64.tar.gz"
+          tar -xzf /tmp/nfpm.tar.gz -C /tmp nfpm
+          sudo install -m 0755 /tmp/nfpm /usr/local/bin/nfpm
+          nfpm --version
+
+      # Fail fast (and visibly) when a packaging source this job calls is gone.
+      - name: Verify the packaging sources
+        run: |
+          for source in \
+            packaging/linux/nfpm.yaml \
+            packaging/linux/build-deb-rpm.sh \
+            packaging/linux/build-appimage.sh \
+            packaging/linux/snapcraft.yaml \
+            packaging/linux/stratum-launcher.sh
+          do
+            test -f "$source" || { echo "missing packaging source: $source" >&2; exit 1; }
+          done
+          echo "packaging sources present"
+
+      - name: Build the .deb and the .rpm (nFPM)
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: bash packaging/linux/build-deb-rpm.sh
+
+      - name: Build the AppImage
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: bash packaging/linux/build-appimage.sh
+
+      - name: Check the contract asset names
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          test -f "dist/stratum_${VERSION}_amd64.deb"
+          test -f "dist/stratum-${VERSION}-1.x86_64.rpm"
+          test -f "dist/Stratum-${VERSION}-x86_64.AppImage"
+          ls -l dist
+
+      - name: Upload the Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
+          if-no-files-found: error
+
+      - name: Install snapcraft
+        run: |
+          if ! command -v snap >/dev/null 2>&1; then
+            echo "snap is unavailable on this runner; skipping the optional snap channel" >&2
+            exit 1
+          fi
+          sudo snap install snapcraft --classic
+
+      # Optional channel: snapcraft needs the store credentials and the snap is
+      # published by hand. It must not block the release, so this step is
+      # allowed to fail and the workflow substitutes the ${VERSION} placeholder
+      # itself (snapcraft derives its own file name from `name`).
+      - name: Build the Snap
+        id: snap
+        continue-on-error: true
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          sed "s/\${VERSION}/${VERSION}/" packaging/linux/snapcraft.yaml > snapcraft.yaml
+          snapcraft --destructive-mode
+          mv "stratum-memory_${VERSION}_amd64.snap" "dist/stratum_${VERSION}_amd64.snap"
+
+      - name: Upload the Snap
+        if: ${{ steps.snap.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-snap
+          path: dist/*.snap
+          if-no-files-found: error
+
+  # =========================================================================
+  # windows-installers - MSI (WiX v4) + EXE (Inno Setup), both via PyInstaller.
+  # =========================================================================
+  windows-installers:
+    name: Windows installers (msi, setup.exe)
+    runs-on: windows-latest
+    needs: version
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade pyinstaller .
+
+      - name: Build the MSI
+        shell: pwsh
+        run: ./packaging/windows/build-msi.ps1 -Version "${{ needs.version.outputs.version }}"
+
+      - name: Build the EXE installer
+        shell: pwsh
+        run: ./packaging/windows/build-exe.ps1 -Version "${{ needs.version.outputs.version }}"
+
+      - name: Check the contract asset names
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          foreach ($asset in @("Stratum-$env:VERSION-x64.msi", "Stratum-$env:VERSION-setup.exe")) {
+            if (-not (Test-Path (Join-Path "dist" $asset))) { throw "missing artifact: $asset" }
+          }
+          Get-ChildItem dist
+
+      - name: Upload the Windows installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: |
+            dist/*.msi
+            dist/*.exe
+          if-no-files-found: error
+
+  # =========================================================================
+  # macos-installers - .pkg (pkgbuild/productbuild) + .dmg (hdiutil).
+  # =========================================================================
+  macos-installers:
+    name: macOS installers (pkg, dmg)
+    runs-on: macos-latest
+    needs: version
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the build dependencies
+        run: python -m pip install --upgrade build
+
+      - name: Build the .pkg
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: sh packaging/macos/build-pkg.sh
+
+      - name: Build the .dmg
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: sh packaging/macos/build-dmg.sh
+
+      - name: Check the contract asset names
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          test -f "dist/Stratum-${VERSION}-x86_64.pkg"
+          test -f "dist/Stratum-${VERSION}-x86_64.dmg"
+          ls -l dist
+
+      - name: Upload the macOS installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-installers
+          path: |
+            dist/*.pkg
+            dist/*.dmg
+          if-no-files-found: error
+
+  # =========================================================================
+  # container - the mandatory GHCR image (no secret needed, GITHUB_TOKEN only).
+  # =========================================================================
+  container:
+    name: Container image (ghcr.io)
+    runs-on: ubuntu-latest
+    needs: version
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Mandatory channel 2: the GHCR image, from the Dockerfile in the repo root.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the image
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          # The Dockerfile in the repository root is the image source; the
+          # registry path is the contract identifier from docs/distribution.md.
+          image="ghcr.io/totalbassjunkie/stratum-memory"
+          docker build -f Dockerfile -t "${image}:${VERSION}" -t "${image}:latest" .
+          docker push "${image}:${VERSION}"
+          docker push "${image}:latest"
+
+  # =========================================================================
+  # release - all assets, SHA256SUMS, the rewritten manifests, the GitHub Release.
+  # =========================================================================
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs:
+      - version
+      - python-dist
+      - linux-packages
+      - windows-installers
+      - macos-installers
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download every build artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Verify the contract assets are present
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import sys
+
+          version = os.environ["VERSION"]
+          required = [
+              f"stratum-{version}-py3-none-any.whl",
+              f"stratum-{version}.tar.gz",
+              f"stratum_{version}_amd64.deb",
+              f"stratum-{version}-1.x86_64.rpm",
+              f"Stratum-{version}-x86_64.AppImage",
+              f"Stratum-{version}-x64.msi",
+              f"Stratum-{version}-setup.exe",
+              f"Stratum-{version}-x86_64.pkg",
+              f"Stratum-{version}-x86_64.dmg",
+          ]
+          missing = [name for name in required if not (pathlib.Path("artifacts") / name).is_file()]
+          if missing:
+              sys.exit("missing release assets: " + ", ".join(missing))
+          print(f"all {len(required)} required assets are present")
+          PY
+
+      - name: Collect the release assets into dist/
+        run: |
+          mkdir -p dist
+          cp artifacts/* dist/
+
+      - name: Create SHA256SUMS
+        run: |
+          cd dist
+          sha256sum *.whl *.tar.gz *.deb *.rpm *.AppImage *.msi *.exe *.pkg *.dmg > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Rewrite the packaging manifests (version, URLs, SHA256)
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python .github/workflows/scripts/update-manifests.py
+
+      # Mandatory channel 1: the GitHub Release with every contract asset.
+      - name: Create the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: Stratum-Memory ${{ needs.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
+            dist/*.snap
+            dist/*.msi
+            dist/*.exe
+            dist/*.pkg
+            dist/*.dmg
+            dist/SHA256SUMS
+
+  # =========================================================================
+  # Optional publish channels. None of them is in `release.needs`, so a missing
+  # secret (or a failing store) can never block the mandatory channels.
+  # =========================================================================
+
+  # ---- PyPI: trusted publishing (OIDC) preferred, PYPI_TOKEN as the fallback.
+  publish-pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs:
+      - version
+      - python-dist
+      - release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+    steps:
+      - name: Download the Python distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist
+
+      - name: Skip (no PyPI credentials configured)
+        if: ${{ env.PYPI_TOKEN == '' }}
+        run: |
+          echo "::notice::PYPI_TOKEN is not set; configure trusted publishing (OIDC) or the token to publish."
+
+      - name: Publish with trusted publishing (OIDC)
+        if: ${{ env.PYPI_TOKEN == '' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          # Trusted publishing needs an id-token; set `skip-existing: true` if a
+          # rerun of the same tag should not fail on an already-published file.
+
+      - name: Publish with the PYPI_TOKEN secret
+        if: ${{ env.PYPI_TOKEN != '' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          password: ${{ env.PYPI_TOKEN }}
+
+  # ---- npm: the thin wrapper package in npm/.
+  publish-npm:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    needs:
+      - version
+      - release
+    permissions:
+      contents: read
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Skip (no npm token configured)
+        if: ${{ env.NPM_TOKEN == '' }}
+        run: echo "::notice::NPM_TOKEN is not set; skipping the npm channel."
+
+      - name: Publish stratum-memory to npm
+        if: ${{ env.NPM_TOKEN != '' }}
+        working-directory: npm
+        env:
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+        run: |
+          npm version "${VERSION}" --no-git-tag-version --allow-same-version
+          npm publish --access public
+
+  # ---- Homebrew: push the rewritten formula to the tap.
+  publish-homebrew:
+    name: Publish the Homebrew formula
+    runs-on: ubuntu-latest
+    needs:
+      - version
+      - release
+    permissions:
+      contents: read
+    env:
+      TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Skip (no tap token configured)
+        if: ${{ env.TAP_GITHUB_TOKEN == '' }}
+        run: echo "::notice::TAP_GITHUB_TOKEN is not set; skipping the Homebrew tap."
+
+      - name: Push the formula to TotalBassJunkie/homebrew-stratum
+        if: ${{ env.TAP_GITHUB_TOKEN != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: TotalBassJunkie/homebrew-stratum
+          token: ${{ env.TAP_GITHUB_TOKEN }}
+          path: tap
+
+      - name: Commit the formula
+        if: ${{ env.TAP_GITHUB_TOKEN != '' }}
+        run: |
+          cp packaging/homebrew/stratum-memory.rb tap/Formula/stratum-memory.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/stratum-memory.rb
+          git diff --cached --quiet && exit 0
+          git commit -m "stratum-memory ${VERSION}"
+          git push origin HEAD:main
+
+  # ---- Scoop: push the rewritten manifest to the bucket.
+  publish-scoop:
+    name: Publish the Scoop manifest
+    runs-on: ubuntu-latest
+    needs:
+      - version
+      - release
+    permissions:
+      contents: read
+    env:
+      TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Skip (no bucket token configured)
+        if: ${{ env.TAP_GITHUB_TOKEN == '' }}
+        run: echo "::notice::TAP_GITHUB_TOKEN is not set; skipping the Scoop bucket."
+
+      - name: Check out the bucket
+        if: ${{ env.TAP_GITHUB_TOKEN != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: TotalBassJunkie/scoop-stratum
+          token: ${{ env.TAP_GITHUB_TOKEN }}
+          path: bucket
+
+      - name: Commit the manifest
+        if: ${{ env.TAP_GITHUB_TOKEN != '' }}
+        run: |
+          mkdir -p bucket/bucket
+          cp packaging/scoop/stratum-memory.json bucket/bucket/stratum-memory.json
+          cd bucket
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add bucket/stratum-memory.json
+          git diff --cached --quiet && exit 0
+          git commit -m "stratum-memory ${VERSION}"
+          git push origin HEAD:main
+
+  # ---- winget: open the manifest PR against microsoft/winget-pkgs.
+  publish-winget:
+    name: Publish the winget manifest
+    runs-on: windows-latest
+    needs:
+      - version
+      - release
+    permissions:
+      contents: read
+    env:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Skip (no winget token configured)
+        if: ${{ env.WINGET_TOKEN == '' }}
+        shell: pwsh
+        run: Write-Output "::notice::WINGET_TOKEN is not set; skipping the winget PR."
+
+      - name: Submit the manifest update
+        if: ${{ env.WINGET_TOKEN != '' }}
+        shell: pwsh
+        run: |
+          iwr https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+          ./wingetcreate.exe update TotalBassJunkie.StratumMemory `
+            --version "${{ needs.version.outputs.version }}" `
+            --urls "https://github.com/${{ github.repository }}/releases/download/v${{ needs.version.outputs.version }}/Stratum-${{ needs.version.outputs.version }}-x64.msi" `
+            --submit --token "${{ env.WINGET_TOKEN }}"
+
+  # ---- Chocolatey: push the package built from the rewritten nuspec.
+  publish-chocolatey:
+    name: Publish the Chocolatey package
+    runs-on: windows-latest
+    needs:
+      - version
+      - release
+    permissions:
+      contents: read
+    env:
+      CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Skip (no Chocolatey API key configured)
+        if: ${{ env.CHOCOLATEY_API_KEY == '' }}
+        shell: pwsh
+        run: Write-Output "::notice::CHOCOLATEY_API_KEY is not set; skipping the Chocolatey feed."
+
+      - name: Build and push the Chocolatey package
+        if: ${{ env.CHOCOLATEY_API_KEY != '' }}
+        shell: pwsh
+        run: |
+          choco pack packaging/chocolatey/stratum-memory.nuspec --outdir dist
+          choco push (Get-ChildItem dist/*.nupkg | Select-Object -First 1).FullName `
+            --source https://push.chocolatey.org/ --api-key "$env:CHOCOLATEY_API_KEY"

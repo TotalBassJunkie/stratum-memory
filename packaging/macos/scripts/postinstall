@@ -1,0 +1,58 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+# Stratum-Memory - .pkg postinstall script (POSIX sh).
+#
+# Runs as root after the payload has been installed. It links the `stratum`
+# CLI into /usr/local/bin and verifies it, without ever touching the network.
+# A non-zero exit makes the installer report a failure.
+#
+#   /usr/local/lib/stratum/bin/stratum   canonical launcher (payload)
+#   /usr/local/bin/stratum               symlink -> canonical launcher
+#
+# If a foreign file already occupies /usr/local/bin/stratum it is moved aside
+# (never deleted) before the symlink is created.
+# ---------------------------------------------------------------------------
+
+set -eu
+
+LAUNCHER_DIR="/usr/local/bin"
+LAUNCHER="/usr/local/bin/stratum"
+CANONICAL="/usr/local/lib/stratum/bin/stratum"
+BACKUP="$LAUNCHER.stratum-memory.bak"
+
+log() { printf '%s\n' "$*"; }
+warn() { printf 'warning: %s\n' "$*" >&2; }
+
+if [ ! -x "$CANONICAL" ]; then
+    printf 'error: expected launcher missing or not executable: %s\n' "$CANONICAL" >&2
+    exit 1
+fi
+
+mkdir -p "$LAUNCHER_DIR"
+
+# Only replace our own symlink; preserve anything else by moving it aside.
+if [ -L "$LAUNCHER" ]; then
+    rm -f "$LAUNCHER"
+elif [ -e "$LAUNCHER" ]; then
+    warn "existing $LAUNCHER is not a symlink; moving it to $BACKUP"
+    mv -f "$LAUNCHER" "$BACKUP"
+fi
+
+ln -s "$CANONICAL" "$LAUNCHER"
+
+if [ ! -x "$LAUNCHER" ]; then
+    printf 'error: failed to link %s -> %s\n' "$LAUNCHER" "$CANONICAL" >&2
+    exit 1
+fi
+log "linked $LAUNCHER -> $CANONICAL"
+
+# Verify the CLI answers (offline, no network). A failure here is not fatal:
+# the machine may simply lack a usable Python, which preinstall already warned
+# about; the launcher itself is installed and correct.
+if out="$("$LAUNCHER" --version 2>&1)"; then
+    log "verified: $out"
+else
+    warn "'stratum --version' did not succeed; check your Python installation."
+fi
+
+exit 0

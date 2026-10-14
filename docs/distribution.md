@@ -23,8 +23,8 @@ Produced on tag `v<version>` and attached to the GitHub Release:
 
 | Asset | OS | Built by |
 |---|---|---|
-| `stratum-<version>-py3-none-any.whl` | any | `python -m build` |
-| `stratum-<version>.tar.gz` | any | `python -m build` |
+| `stratum_memory-<version>-py3-none-any.whl` | any | `python -m build` |
+| `stratum_memory-<version>.tar.gz` | any | `python -m build` |
 | `stratum_<version>_amd64.deb` | Linux | nfpm (ubuntu runner) |
 | `stratum-<version>-1.x86_64.rpm` | Linux | nfpm (ubuntu runner) |
 | `Stratum-<version>-x86_64.AppImage` | Linux | appimagetool (ubuntu runner) |
@@ -34,6 +34,13 @@ Produced on tag `v<version>` and attached to the GitHub Release:
 | `Stratum-<version>-x86_64.pkg` | macOS | pkgbuild/productbuild (macos runner) |
 | `Stratum-<version>-x86_64.dmg` | macOS | hdiutil (macos runner) |
 | `SHA256SUMS` | any | checksums for all of the above |
+
+The two Python distributions carry the PEP 503-normalised project name:
+`pyproject.toml` declares `name = "stratum-memory"`, and `python -m build`
+rewrites the dash to an underscore before naming the files, so the wheel is
+`stratum_memory-<version>-py3-none-any.whl` and the sdist is
+`stratum_memory-<version>.tar.gz`. Every consumer (release workflow, Homebrew
+formula, AppImage/Snap payload, PyPI publish) must use that spelling.
 
 ## Channel matrix
 

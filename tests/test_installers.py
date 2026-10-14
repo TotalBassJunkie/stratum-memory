@@ -204,16 +204,29 @@ def _posix_path(path: Path) -> str:
 def _run_script_with_shims(
     shim_dir: Path, script: Path, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
-    """Run *script* under ``sh`` with *shim_dir* first on a minimal PATH.
+    """Run *script* under ``sh`` with *shim_dir* as the **entire** PATH.
 
-    The shim directory is prepended **inside** the shell on purpose: on Windows
+    The shim directory is set **inside** the shell on purpose: on Windows
     git-bash prepends its own tool directories (``/usr/bin``, …) while starting up,
     so a PATH set by the parent process would be shadowed by the real ``uname``.
-    The rest of the PATH is the POSIX toolbox only, so no real ``python``/``pipx``
-    can leak into the run.
+
+    The PATH deliberately contains the shim directory and nothing else. The first
+    version of this helper appended ``/usr/bin:/bin`` as a "POSIX toolbox", which
+    looks harmless on Windows but is fatal on Debian/Ubuntu: there ``/bin`` is a
+    symlink to ``/usr/bin``, so the runner's real ``python3`` (3.12) and ``pipx``
+    sit exactly where the toolbox was. ``install.sh`` found them before the shims,
+    so ``test_install_sh_fails_cleanly_without_python`` and
+    ``test_install_sh_rejects_a_too_old_python`` exited 0 instead of 1 on
+    ubuntu-latest (they had only ever passed on Windows, where git-bash's PATH
+    never reaches the Windows Python). The shims must be the *only* interpreter
+    the installer can see, so the run needs no host toolbox at all: the one
+    external command ``install.sh`` calls in a dry run is ``cat`` (the
+    missing-Python guidance), and it is provided as a shim here. ``sh`` itself is
+    started through its absolute path for the same reason.
     """
     assert BASH is not None
-    wrapper = 'PATH="$1:/usr/bin:/bin"; export PATH; exec sh "$2"'
+    _shim(shim_dir, "cat", 'exec /bin/cat "$@"\n')
+    wrapper = 'PATH="$1"; export PATH; exec /bin/sh "$2"'
     environment = {**os.environ, "PATH": "/usr/bin:/bin"}
     environment.update(env or {})
     return subprocess.run(
@@ -499,6 +512,40 @@ def test_install_sh_dry_run_changes_nothing(tmp_path: Path) -> None:
     # No venv/bin/stratum was created anywhere in the private HOME.
     assert not (home / ".local" / "bin" / "stratum").exists()
     assert not (home / ".local" / "pipx").exists()
+
+
+@needs_bash
+def test_install_sh_dry_runs_see_only_the_shims(tmp_path: Path) -> None:
+    """Regression guard for the ubuntu-latest failures.
+
+    The helper used to append ``/usr/bin:/bin`` to the shim PATH. On
+    Debian/Ubuntu ``/bin`` is a symlink to ``/usr/bin``, so that "toolbox"
+    exposed the runner's real ``python3`` (3.12) and ``pipx``. ``install.sh``
+    then found a working interpreter *before* the shims and
+    ``test_install_sh_fails_cleanly_without_python`` /
+    ``test_install_sh_rejects_a_too_old_python`` exited 0 instead of 1 (they had
+    only ever been green on Windows). The shim directory must therefore be the
+    whole PATH the installer sees - nothing else.
+    """
+    probe = tmp_path / "probe.sh"
+    probe.write_text('#!/bin/sh\nprintf "%s" "$PATH"\n', encoding="utf-8", newline="\n")
+    probe.chmod(0o755)
+
+    shim_dir = tmp_path / "bin"
+    shim_dir.mkdir()
+    result = _run_script_with_shims(shim_dir, probe)
+
+    assert result.returncode == 0, result.stderr
+    seen = result.stdout.strip()
+    assert seen == _posix_path(shim_dir), (
+        "the installer must see only the shim directory on PATH; "
+        f"it saw {seen!r} (a host python3/pipx could leak in)"
+    )
+    # Belt and braces: the shared system directories must not be on that PATH,
+    # because on Debian/Ubuntu they are where the runner's python3/pipx live.
+    entries = seen.split(":")
+    assert "/usr/bin" not in entries, f"the host toolbox leaked into PATH: {seen!r}"
+    assert "/bin" not in entries, f"the host toolbox leaked into PATH: {seen!r}"
 
 
 # =========================================================== install.ps1: static

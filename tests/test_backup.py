@@ -47,6 +47,20 @@ DUMP_NAME_PATTERN = r"stratum-\d{8}-\d{6}\.dump"
 #: The vault-archive contract.
 VAULT_NAME_PATTERN = r"vault-\d{8}-\d{6}\.tar\.gz"
 
+#: A POSIX toolbox PATH for the shell dry runs.
+#:
+#: The dry-run tests deliberately keep docker/pg_dump/tar off the PATH, but the
+#: scripts still need the coreutils (`date` for the timestamp and log lines,
+#: `basename` for the messages, `sort` for the retention order). The original
+#: value was ``""``, which works on Windows (git-bash always prepends its own
+#: ``/usr/bin`` when it starts, so the tools reappear) but fails on ubuntu-latest
+#: with ``backup.sh: line 70: date: No such file or directory`` (exit 127) and
+#: ``restore.sh: line 157: basename: command not found``. A real POSIX toolbox
+#: makes the test check the *retention contract* instead of the runner's PATH
+#: defaults, and it stays leak-free: no real ``docker``/``pg_dump``/``tar`` is on
+#: ``/usr/bin:/bin`` in the CI image, and ``python3`` is never consulted.
+TOOLBOX_PATH = "/usr/bin:/bin"
+
 
 # --------------------------------------------------------------- shell discovery
 
@@ -153,7 +167,8 @@ def test_backup_sh_dry_run_exits_clean_and_writes_nothing(tmp_path) -> None:
         "STRATUM_BACKUP_DIR": str(target),
         "STRATUM_BACKUP_DRY_RUN": "1",
         # Keep the script off docker/pg_dump entirely; dry-run must not need them.
-        "PATH": "",
+        # The toolbox PATH keeps `date`/`basename` reachable (see TOOLBOX_PATH).
+        "PATH": TOOLBOX_PATH,
     }
     result = subprocess.run(
         [BASH, str(SCRIPTS_DIR / "backup.sh"), "--dry-run", "--dir", str(target), "--keep", "7"],
@@ -182,7 +197,9 @@ def test_backup_sh_dry_run_prunes_oldest_per_family(tmp_path) -> None:
     for name in dumps + vaults:
         (target / name).write_bytes(b"x")
 
-    env = {"PATH": ""}
+    # Toolbox PATH: the prune tests need `date` (log lines) and `sort` (the
+    # chronological order), never docker/pg_dump. See TOOLBOX_PATH.
+    env = {"PATH": TOOLBOX_PATH}
     result = subprocess.run(
         [BASH, str(SCRIPTS_DIR / "backup.sh"), "--dry-run", "--dir", str(target), "--keep", "2"],
         capture_output=True,
@@ -266,7 +283,13 @@ def test_restore_sh_verify_requires_no_real_docker(tmp_path) -> None:
     ).stdout.strip()
 
     env = dict(os.environ)
-    env["PATH"] = posix_bin
+    # The fake `docker` must win, but `restore.sh` still needs the coreutils
+    # (`date` for the log lines, `basename` for the verify message). A PATH of
+    # only the fake bin makes the script die with `basename: command not found`
+    # (exit 127) on ubuntu-latest, where there is no git-bash to fall back on;
+    # appending the POSIX toolbox keeps the test about `docker exec` instead of
+    # the runner's PATH. No real `docker`/`pg_dump` lives on /usr/bin:/bin.
+    env["PATH"] = posix_bin + ":" + TOOLBOX_PATH
     result = subprocess.run(
         [BASH, str(SCRIPTS_DIR / "restore.sh"), "--dump", str(dump), "--verify"],
         capture_output=True,
@@ -316,7 +339,9 @@ def test_backup_sh_prune_ignores_foreign_and_invalid_names(tmp_path) -> None:
     for name in valid + invalid:
         (target / name).write_bytes(b"x")
 
-    env = {"PATH": ""}
+    # Toolbox PATH: the prune tests need `date` (log lines) and `sort` (the
+    # chronological order), never docker/pg_dump. See TOOLBOX_PATH.
+    env = {"PATH": TOOLBOX_PATH}
     result = subprocess.run(
         [BASH, str(SCRIPTS_DIR / "backup.sh"), "--dry-run", "--dir", str(target), "--keep", "2"],
         capture_output=True,
@@ -359,7 +384,9 @@ def test_backup_sh_prune_parity_with_python_reference(tmp_path) -> None:
     agreed = [n for n in valid + invalid if canonical.match(n)]
     expected = backup_lib.select_backups_to_prune(agreed, keep=keep)
 
-    env = {"PATH": ""}
+    # Toolbox PATH: the prune tests need `date` (log lines) and `sort` (the
+    # chronological order), never docker/pg_dump. See TOOLBOX_PATH.
+    env = {"PATH": TOOLBOX_PATH}
     result = subprocess.run(
         [BASH, str(SCRIPTS_DIR / "backup.sh"), "--dry-run", "--dir", str(target), "--keep", str(keep)],
         capture_output=True,
@@ -400,7 +427,9 @@ def test_backup_sh_prune_suffix_is_anchored(tmp_path) -> None:
     for name in names:
         (target / name).write_bytes(b"x")
 
-    env = {"PATH": ""}
+    # Toolbox PATH: the prune tests need `date` (log lines) and `sort` (the
+    # chronological order), never docker/pg_dump. See TOOLBOX_PATH.
+    env = {"PATH": TOOLBOX_PATH}
     result = subprocess.run(
         [BASH, str(SCRIPTS_DIR / "backup.sh"), "--dry-run", "--dir", str(target), "--keep", "0"],
         capture_output=True,
@@ -426,7 +455,9 @@ def test_backup_sh_keep_zero_prunes_only_valid_stamped(tmp_path) -> None:
     for name in valid + invalid:
         (target / name).write_bytes(b"x")
 
-    env = {"PATH": ""}
+    # Toolbox PATH: the prune tests need `date` (log lines) and `sort` (the
+    # chronological order), never docker/pg_dump. See TOOLBOX_PATH.
+    env = {"PATH": TOOLBOX_PATH}
     result = subprocess.run(
         [BASH, str(SCRIPTS_DIR / "backup.sh"), "--dry-run", "--dir", str(target), "--keep", "0"],
         capture_output=True,
@@ -446,6 +477,32 @@ def test_backup_sh_dump_magic_guard_present() -> None:
     # trusting a merely non-empty file, so a truncated dump cannot be finalised.
     text = (SCRIPTS_DIR / "backup.sh").read_text(encoding="utf-8")
     assert "PGDMP" in text, "backup.sh must check the pg_dump custom-format magic"
+
+
+def test_shell_dry_runs_get_a_posix_toolbox_path() -> None:
+    """Regression guard for the ubuntu-latest failures.
+
+    The dry runs used ``PATH=""``. On Windows git-bash prepends its own
+    ``/usr/bin`` while starting up, so ``date``/``basename`` reappeared and the
+    tests passed; on ubuntu-latest the empty PATH really was empty and the
+    scripts died with ``backup.sh: line 70: date: No such file or directory``
+    and ``restore.sh: line 157: basename: command not found`` (exit 127). The
+    tests must hand the scripts a real POSIX toolbox - and only the toolbox, so
+    no real ``docker``/``pg_dump`` can be reached.
+    """
+    assert TOOLBOX_PATH, "the shell dry runs need a non-empty toolbox PATH"
+    entries = TOOLBOX_PATH.split(":")
+    assert "/usr/bin" in entries, "the coreutils (date, basename, sort) live in /usr/bin"
+    assert "" not in entries, "an empty PATH entry would re-open the current directory"
+    # Nothing the scripts must *not* reach in a dry run may be on the toolbox.
+    for banned in ("/usr/local/bin", "/snap/bin", "/opt/homebrew/bin"):
+        assert banned not in entries, f"{banned} would expose host tools to the dry run"
+
+    # ...and the test bodies must actually use it, not the old empty PATH. The
+    # regex is written with `\s*` so this assertion's own source does not contain
+    # the literal it forbids.
+    text = Path(__file__).read_text(encoding="utf-8")
+    assert re.search(r'"PATH":\s*""', text) is None, "a dry run still clears PATH"
 
 
 @pytest.mark.skipif(BASH is None, reason="no working bash on PATH")

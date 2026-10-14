@@ -117,7 +117,10 @@ def test_homebrew_formula_metadata() -> None:
 
 def test_homebrew_formula_prefers_the_release_wheel() -> None:
     text = _text(HOMEBREW_FORMULA)
-    assert f"stratum-{__version__}-py3-none-any.whl" in text
+    # `python -m build` names the wheel after the PEP 503-normalised project
+    # name (`stratum-memory` -> `stratum_memory`); the old dash spelling was
+    # never produced by any build and would 404 the formula's `url`.
+    assert f"stratum_memory-{__version__}-py3-none-any.whl" in text
     assert GH_REPO_URL + f"/releases/download/{RELEASE_TAG}/" in text
     assert re.search(r'^\s*sha256 "[0-9a-f]{64}"$', text, flags=re.MULTILINE)
 

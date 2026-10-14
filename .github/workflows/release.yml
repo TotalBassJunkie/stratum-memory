@@ -5,13 +5,13 @@
 # `workflow_dispatch` with the `version` input) builds every installer named in
 # the contract's "Release assets" table and attaches it to the GitHub Release:
 #
-#   stratum-<version>-py3-none-any.whl        python-dist      (ubuntu-latest)
-#   stratum-<version>.tar.gz                  python-dist      (ubuntu-latest)
+#   stratum_memory-<version>-py3-none-any.whl python-dist      (ubuntu-latest)
+#   stratum_memory-<version>.tar.gz           python-dist      (ubuntu-latest)
 #   stratum_<version>_amd64.deb               linux-packages   (ubuntu-latest, nFPM)
 #   stratum-<version>-1.x86_64.rpm            linux-packages   (ubuntu-latest, nFPM)
 #   Stratum-<version>-x86_64.AppImage         linux-packages   (ubuntu-latest, appimagetool)
 #   stratum_<version>_amd64.snap              linux-packages   (ubuntu-latest, snapcraft)
-#   Stratum-<version>-x64.msi                 windows-installers (windows-latest, WiX v4)
+#   Stratum-<version>-x64.msi                 windows-installers (windows-latest, WiX)
 #   Stratum-<version>-setup.exe               windows-installers (windows-latest, Inno Setup)
 #   Stratum-<version>-x86_64.pkg              macos-installers (macos-latest, pkgbuild/productbuild)
 #   Stratum-<version>-x86_64.dmg              macos-installers (macos-latest, hdiutil)
@@ -161,8 +161,14 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          test -f "dist/stratum-${VERSION}-py3-none-any.whl"
-          test -f "dist/stratum-${VERSION}.tar.gz"
+          # `python -m build` normalises the project name to the PEP 503 form
+          # before it names the files, so `stratum-memory` in pyproject.toml
+          # becomes the `stratum_memory-...` prefix below. The old
+          # `stratum-${VERSION}-...` spelling was never produced by any build and
+          # made this step fail on the first tag; the file names are pinned by
+          # tests/test_workflows.py against a real `python -m build` run.
+          test -f "dist/stratum_memory-${VERSION}-py3-none-any.whl"
+          test -f "dist/stratum_memory-${VERSION}.tar.gz"
           ls -l dist
 
       - name: Upload the Python distributions
@@ -278,7 +284,34 @@ jobs:
           if-no-files-found: error
 
   # =========================================================================
-  # windows-installers - MSI (WiX v4) + EXE (Inno Setup), both via PyInstaller.
+  # windows-installers - MSI (WiX) + EXE (Inno Setup), both via PyInstaller.
+  #
+  # WIX/OSMF (WIX7015): `dotnet tool install --global wix` in
+  # packaging/windows/build-msi.ps1 installs the *latest* WiX, and from WiX v7
+  # on every command refuses to run until the Open Source Maintenance Fee
+  # (OSMF) EULA has been accepted:
+  #
+  #   wix.exe : error WIX7015: You must accept the Open Source Maintenance Fee
+  #   (OSMF) EULA to use WiX Toolset v7.
+  #
+  # That is what broke the first `v0.1.0` run's MSI step. The fix belongs in
+  # packaging/windows/build-msi.ps1 (it owns the WiX install + `wix build`
+  # invocation) and is one of exactly two things:
+  #
+  #   * pin the tool to a v6 line, which has no EULA gate -
+  #       dotnet tool install --global wix --version 6.*
+  #     (the v4 `<Package>`/`xmlns` sources this repo ships also build under
+  #     v6), or
+  #   * stay on v7 and accept the EULA explicitly, which the docs prescribe for
+  #     CI/CD:
+  #       wix eula accept wix7        # once per machine, or
+  #       wix build -acceptEula wix7 ...   # per invocation
+  #     https://docs.firegiant.com/wix/osmf/ ("Direct Acceptance").
+  #
+  # This workflow needs no change for either route: it only calls the script and
+  # never invokes `wix` itself, so there is no version to pin here. The note is
+  # kept next to the call so the constraint is not lost. `tests/test_workflows.py`
+  # pins that no workflow hard-codes a WiX version of its own.
   # =========================================================================
   windows-installers:
     name: Windows installers (msi, setup.exe)
@@ -449,8 +482,8 @@ jobs:
 
           version = os.environ["VERSION"]
           required = [
-              f"stratum-{version}-py3-none-any.whl",
-              f"stratum-{version}.tar.gz",
+              f"stratum_memory-{version}-py3-none-any.whl",
+              f"stratum_memory-{version}.tar.gz",
               f"stratum_{version}_amd64.deb",
               f"stratum-{version}-1.x86_64.rpm",
               f"Stratum-{version}-x86_64.AppImage",

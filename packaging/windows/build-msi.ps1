@@ -75,12 +75,16 @@ Write-Host "build-msi: version  $Version"
 Write-Host "build-msi: output   $MsiPath"
 
 # ------------------------------------------------------------------- WiX ---
+# WiX v7+ gates the tool behind the Open Source Maintenance Fee (OSMF) EULA and
+# aborts with "error WIX7015" on a clean CI runner. Pin the last freely usable
+# major (v4, MIT) which is also the schema generation the .wxs is written for.
+$WixVersion = if ($env:WIX_VERSION) { $env:WIX_VERSION } else { '4.*' }
 if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
     if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
         throw "Neither 'wix' nor 'dotnet' is on PATH. Install the .NET SDK, then re-run."
     }
-    Write-Host 'build-msi: installing the WiX .NET tool (dotnet tool install --global wix)'
-    & dotnet tool install --global wix
+    Write-Host "build-msi: installing the WiX .NET tool (dotnet tool install --global wix --version $WixVersion)"
+    & dotnet tool install --global wix --version $WixVersion
     if ($LASTEXITCODE -ne 0) { throw "dotnet tool install --global wix failed with exit code $LASTEXITCODE" }
     $dotnetTools = Join-Path $env:USERPROFILE '.dotnet\tools'
     if (Test-Path $dotnetTools) { $env:PATH = "$dotnetTools;$env:PATH" }

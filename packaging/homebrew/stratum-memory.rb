@@ -14,7 +14,7 @@ class StratumMemory < Formula
 
   desc "Unified AI memory and context system (4 layers, ECL ingestion, curator gate, MCP API)"
   homepage "https://github.com/TotalBassJunkie/stratum-memory"
-  url "https://github.com/TotalBassJunkie/stratum-memory/releases/download/v0.1.0/stratum-0.1.0-py3-none-any.whl",
+  url "https://github.com/TotalBassJunkie/stratum-memory/releases/download/v0.1.0/stratum_memory-0.1.0-py3-none-any.whl",
       using: :nounzip
   # updated by .github/workflows/release.yml
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"

@@ -93,8 +93,11 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          test -f "dist/stratum-${VERSION}-py3-none-any.whl"
-          test -f "dist/stratum-${VERSION}.tar.gz"
+          # The file names are PEP 503 normalised by `python -m build`:
+          # `stratum-memory` becomes `stratum_memory-...`. Pinned by
+          # tests/test_workflows.py against a real build.
+          test -f "dist/stratum_memory-${VERSION}-py3-none-any.whl"
+          test -f "dist/stratum_memory-${VERSION}.tar.gz"
           ls -l dist
 
       - name: Upload the distributions as a workflow artifact

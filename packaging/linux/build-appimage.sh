@@ -41,7 +41,7 @@ echo "==> assembling the AppDir"
 # Install the freshly built wheel (and its dependencies) into the payload.
 python -m pip install --no-cache-dir --upgrade \
     --target "$APPDIR/usr/lib/stratum-memory" \
-    dist/stratum-"${VERSION}"-py3-none-any.whl
+    dist/stratum_memory-"${VERSION}"-py3-none-any.whl
 
 install -m 0755 packaging/linux/stratum-launcher.sh "$APPDIR/usr/bin/stratum"
 install -m 0755 packaging/linux/AppRun "$APPDIR/AppRun"

@@ -238,7 +238,7 @@ def main() -> None:
     packaging = pathlib.Path(os.environ.get("PACKAGING_DIR", "packaging"))
     table = load_checksums(dist)
 
-    wheel = f"stratum-{version}-py3-none-any.whl"
+    wheel = f"stratum_memory-{version}-py3-none-any.whl"
     setup = f"Stratum-{version}-setup.exe"
     msi = f"Stratum-{version}-x64.msi"
 

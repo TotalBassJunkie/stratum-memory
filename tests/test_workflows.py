@@ -66,9 +66,11 @@ BUILD_SOURCES = (
 )
 
 #: The asset names fixed by docs/distribution.md, with ``<version>`` standing in
-#: for the CI-provided ``${VERSION}`` / ``${{ ... }}`` expression.
+#: for the CI-provided ``${VERSION}`` / ``${{ ... }}`` expression. The two Python
+#: distributions carry the PEP 503-normalised project name (``stratum_memory``),
+#: not the PyPI name's dash spelling - see ``python_distribution_names()``.
 CONTRACT_ASSETS = (
-    "stratum-<version>-py3-none-any.whl",
+    "stratum_memory-<version>-py3-none-any.whl",
     "stratum_<version>_amd64.deb",
     "stratum-<version>-1.x86_64.rpm",
     "Stratum-<version>-x86_64.AppImage",
@@ -257,6 +259,140 @@ def test_release_builds_the_wheel_and_the_sdist() -> None:
     assert ".whl" in text and ".tar.gz" in text, "both distributions must be checked"
 
 
+# ================================================ python-dist file names (BLOCKER)
+#
+# `python -m build` names the wheel/sdist after the *PEP 503 normalised* project
+# name: `name = "stratum-memory"` in pyproject.toml becomes the file prefix
+# `stratum_memory`. The first `v0.1.0` release run failed in three jobs because
+# the workflow, the Homebrew formula, the AppImage/Snap build scripts, the
+# manifest rewriter and the docs all spelled the files `stratum-<version>-...`,
+# a name no build ever produces. These tests pin the real names and forbid the
+# old spelling from coming back.
+
+#: The literal file prefix `python -m build` emits for this project.
+PYTHON_DIST_PREFIX = "stratum_memory"
+
+
+def python_distribution_names(version: str) -> tuple[str, str]:
+    """The wheel and sdist file names ``python -m build`` produces for *version*.
+
+    Derived from the project name the way the PEP 503/PEP 427 file-name rule
+    does (lowercase, runs of ``-``/``_``/``.`` collapse to ``_``), so the test
+    agrees with a real build instead of hard-coding a spelling. A real build was
+    measured on this repository:
+
+        Successfully built stratum_memory-0.1.0.tar.gz
+        and stratum_memory-0.1.0-py3-none-any.whl
+    """
+    project_name = _project_name()
+    prefix = re.sub(r"[-_.]+", "_", project_name).lower()
+    return (
+        f"{prefix}-{version}-py3-none-any.whl",
+        f"{prefix}-{version}.tar.gz",
+    )
+
+
+def _project_name() -> str:
+    """Read ``[project].name`` from pyproject.toml (no TOML lib needed)."""
+    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'(?m)^name\s*=\s*"([^"]+)"', text)
+    assert match, "pyproject.toml must declare [project].name"
+    return match.group(1)
+
+
+def test_python_dist_prefix_is_the_normalised_project_name() -> None:
+    """The prefix used everywhere must be the build's normalised project name."""
+    assert PYTHON_DIST_PREFIX == re.sub(r"[-_.]+", "_", _project_name()).lower()
+    assert PYTHON_DIST_PREFIX == "stratum_memory", (
+        "the build normalises `stratum-memory` to `stratum_memory`; the workflows, "
+        "manifests and build scripts must use that prefix"
+    )
+
+
+def test_release_checks_the_real_python_dist_names() -> None:
+    """``python-dist`` must `test -f` the names a real build produces."""
+    job = _job(_load(RELEASE), "python-dist")
+    text = _run_text(job)
+    wheel, sdist = python_distribution_names("${VERSION}")
+    assert wheel in text, f"python-dist must check for {wheel}"
+    assert sdist in text, f"python-dist must check for {sdist}"
+
+
+def test_release_forbids_the_old_unbuildable_python_dist_name() -> None:
+    """The old `stratum-<version>-py3-none-any.whl` spelling must never return.
+
+    It is not a name `python -m build` can emit (the dash before the version
+    makes it look like a second project-name separator), so any `test -f` on it
+    fails the release for ever.
+    """
+    text = _text(RELEASE)
+    assert "stratum-${VERSION}-py3-none-any.whl" not in text, (
+        "release.yml still expects the unbuildable `stratum-${VERSION}-...whl` name"
+    )
+    assert "stratum-${VERSION}.tar.gz" not in text, (
+        "release.yml still expects the unbuildable `stratum-${VERSION}.tar.gz` name"
+    )
+    # ...and the release job's asset-presence list must use the real names too.
+    assert 'f"stratum_memory-{version}-py3-none-any.whl"' in text
+    assert 'f"stratum_memory-{version}.tar.gz"' in text
+
+
+@pytest.mark.parametrize(
+    "path",
+    (PUBLISH_PYPI,),
+    ids=lambda p: p.name,
+)
+def test_publish_workflows_check_the_real_python_dist_names(path: Path) -> None:
+    """The manual PyPI workflow must check the same real file names."""
+    text = _text(path)
+    wheel, sdist = python_distribution_names("${VERSION}")
+    assert wheel in text, f"{path.name} must check for {wheel}"
+    assert sdist in text, f"{path.name} must check for {sdist}"
+    assert "stratum-${VERSION}-py3-none-any.whl" not in text
+    assert "stratum-${VERSION}.tar.gz" not in text
+
+
+def test_manifest_rewriter_uses_the_real_wheel_name() -> None:
+    """The Homebrew URL the rewriter builds must name the real wheel."""
+    body = _text(WORKFLOW_DIR / "scripts" / "update-manifests.py")
+    assert 'f"stratum_memory-{version}-py3-none-any.whl"' in body, (
+        "update-manifests.py must build the Homebrew URL from the real wheel name"
+    )
+    assert 'f"stratum-{version}-py3-none-any.whl"' not in body
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        REPO_ROOT / "packaging" / "homebrew" / "stratum-memory.rb",
+        REPO_ROOT / "packaging" / "linux" / "build-appimage.sh",
+        REPO_ROOT / "packaging" / "linux" / "snapcraft.yaml",
+    ),
+    ids=lambda p: p.name,
+)
+def test_packaging_sources_use_the_real_wheel_name(path: Path) -> None:
+    """Every consumer of the built wheel must use the normalised name."""
+    text = _text(path)
+    assert PYTHON_DIST_PREFIX in text, f"{path.name} must reference the {PYTHON_DIST_PREFIX} wheel"
+    assert not re.search(r"stratum-(?:<version>|\$\{VERSION\}|\*|0\.1\.0)-?[^\"'\s]*\.whl", text), (
+        f"{path.name} still uses the unbuildable `stratum-...whl` spelling"
+    )
+
+
+def test_contract_documents_the_real_python_dist_names() -> None:
+    """docs/distribution.md is the contract and must carry the real names."""
+    text = _text(REPO_ROOT / "docs" / "distribution.md")
+    wheel, sdist = python_distribution_names("<version>")
+    assert wheel in text, f"the contract must name {wheel}"
+    assert sdist in text, f"the contract must name {sdist}"
+    assert "stratum-<version>-py3-none-any.whl" not in text, (
+        "the contract still documents the unbuildable wheel name"
+    )
+    assert "stratum-<version>.tar.gz" not in text, (
+        "the contract still documents the unbuildable sdist name"
+    )
+
+
 def test_release_linux_job_builds_deb_rpm_appimage_and_snap() -> None:
     job = _job(_load(RELEASE), "linux-packages")
     text = _run_text(job)
@@ -287,6 +423,30 @@ def test_release_windows_job_calls_both_scripts_with_the_version() -> None:
     assert "build-msi.ps1" in text and "-Version" in text, "the MSI script needs -Version"
     assert "build-exe.ps1" in text, "the EXE script must be called"
     assert "PyInstaller" in text or "pyinstaller" in text, "PyInstaller must be installed"
+
+
+def test_release_does_not_pin_wix_in_the_workflow() -> None:
+    """WiX is installed and invoked inside build-msi.ps1, never in the workflow.
+
+    WiX v7 refuses to run until the OSMF EULA is accepted (``WIX7015``), so the
+    version pin or the `-acceptEula wix7` switch belongs to the script that owns
+    the `wix` invocation. Pinning a WiX version in release.yml as well would put
+    the same decision in two places and drift; the workflow only calls the script.
+    """
+    # The parsed YAML drops comments, so this only sees *executable* workflow
+    # text - the documentation above may mention `wix build`/`acceptEula` freely.
+    workflow = _load(RELEASE)
+    executable = "\n".join(_run_text(job) for job in _jobs(workflow).values())
+    for banned in ("dotnet tool install", "wix build", "wix.exe", "acceptEula", "-acceptEula"):
+        assert banned not in executable, (
+            f"release.yml must not run WiX directly ({banned!r}); build-msi.ps1 owns it"
+        )
+    # The OSMF constraint must stay documented next to the call, so the next
+    # person does not re-add a hard-coded WiX version here.
+    text = _text(RELEASE)
+    assert "OSMF" in text and "WIX7015" in text, (
+        "release.yml must document why WiX is not pinned in the workflow"
+    )
 
 
 def test_release_macos_job_exports_the_version() -> None:
@@ -728,7 +888,7 @@ def _run_rewriter(tmp_path: Path, version: str = "9.9.9") -> tuple[int, str]:
     dist = tmp_path / "dist"
     dist.mkdir()
     assets = (
-        f"stratum-{version}-py3-none-any.whl",
+        f"stratum_memory-{version}-py3-none-any.whl",
         f"Stratum-{version}-setup.exe",
         f"Stratum-{version}-x64.msi",
     )

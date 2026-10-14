@@ -68,7 +68,7 @@ parts:
       set -eu
       # Install the wheel built by the release workflow into the snap payload.
       python3 -m pip install --no-cache-dir --prefix "$SNAPCRAFT_PART_INSTALL/usr" \
-          "$SNAPCRAFT_PROJECT_DIR"/dist/stratum-*-py3-none-any.whl
+          "$SNAPCRAFT_PROJECT_DIR"/dist/stratum_memory-*-py3-none-any.whl
       # The CLI launcher, exactly as the .deb/.rpm install it.
       install -Dm0755 packaging/linux/stratum-launcher.sh "$SNAPCRAFT_PART_INSTALL/bin/stratum"
       install -Dm0644 packaging/linux/stratum.desktop \

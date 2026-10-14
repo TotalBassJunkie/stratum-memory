@@ -47,6 +47,10 @@ platforms:
 apps:
   stratum:
     command: bin/stratum
+    # Ubuntu's pip writes to usr/lib/python3/dist-packages, which the confined
+    # interpreter does not search by default; point it there explicitly.
+    environment:
+      PYTHONPATH: $SNAP/usr/lib/python3/dist-packages
     # `stratum install`/`up`/`down` talk to the Docker socket and fetch the
     # image; `mcp`/`health` reach a configured database.
     plugs:
@@ -86,7 +90,9 @@ parts:
           "$SNAPCRAFT_PART_INSTALL/bin/stratum"
       install -Dm0644 "$SNAPCRAFT_PROJECT_DIR/packaging/linux/stratum.desktop" \
           "$SNAPCRAFT_PART_INSTALL/usr/share/applications/stratum.desktop"
-    prime:
-      - bin/stratum
-      - usr/lib/python3.12
-      - usr/share/applications
+    # No explicit `prime:` whitelist: Ubuntu's pip installs into
+    # usr/lib/python3/dist-packages (not site-packages), so a hard-coded prime
+    # list naming usr/lib/python3.12 aborts with "Failed to copy
+    # .../stage/usr/lib/python3.12: no such file or directory". The default
+    # (prime everything this part installed, plus the staged python3) is both
+    # correct and robust against the dist-packages layout.

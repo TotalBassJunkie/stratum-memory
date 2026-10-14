@@ -241,16 +241,25 @@ def test_snapcraft_yaml_uses_core24_for_python_312() -> None:
     assert "python3.10" not in text, "a Python 3.10 prime path is a hard-coded bug"
 
 
-def test_snapcraft_yaml_primes_the_real_interpreter() -> None:
+def test_snapcraft_does_not_pin_a_brittle_prime_whitelist() -> None:
+    """A hard-coded `prime:` list breaks on Ubuntu's dist-packages layout.
+
+    Ubuntu's pip writes usr/lib/python3/dist-packages, so priming
+    usr/lib/python3.12 aborts with "Failed to copy .../stage/usr/lib/python3.12:
+    no such file or directory" and costs the snap asset. The default priming
+    (everything the part installed) is correct and layout-agnostic.
+    """
     config = _load_yaml(SNAPCRAFT_YAML)
-    parts = config.get("parts") or {}
-    primed = {entry for part in parts.values() for entry in (part.get("prime") or [])}
-    assert "usr/lib/python3.12" in primed, (
-        f"the prime list must name the real interpreter (usr/lib/python3.12); got {sorted(primed)}"
-    )
-    assert "bin/stratum" in primed, "the CLI launcher must be primed"
-    assert not any(entry.startswith("usr/lib/python3.1") and entry != "usr/lib/python3.12" for entry in primed), (
-        "only the python3.12 tree may be primed"
+    for name, part in (config.get("parts") or {}).items():
+        assert "prime" not in part, (
+            f"part {name!r} must not pin a prime whitelist; a wrong path aborts the build"
+        )
+    apps = config.get("apps") or {}
+    assert "stratum" in apps, "the stratum app must be declared"
+    env = apps["stratum"].get("environment") or {}
+    assert "PYTHONPATH" in env and "dist-packages" in str(env["PYTHONPATH"]), (
+        "the confined interpreter does not search dist-packages by default; "
+        "set PYTHONPATH to $SNAP/usr/lib/python3/dist-packages"
     )
 
 
@@ -311,22 +320,6 @@ def test_snapcraft_build_anchors_helper_paths_at_the_project_dir() -> None:
         )
     assert "install -Dm0755 packaging/linux/" not in build, "no relative helper path may remain"
     assert "install -Dm0644 packaging/linux/" not in build, "no relative helper path may remain"
-
-
-def test_snapcraft_primes_only_paths_the_build_actually_creates() -> None:
-    """`prime` entries must exist after override-build, or snapcraft aborts.
-
-    `usr/lib/python3` is not created by `pip install --prefix` (it writes
-    `usr/lib/python3.12/`), so priming it fails with "Failed to copy ...:
-    no such file or directory" and costs the snap asset.
-    """
-    config = _load_yaml(SNAPCRAFT_YAML)
-    parts = config.get("parts") or {}
-    primed = {entry for part in parts.values() for entry in (part.get("prime") or [])}
-    assert "usr/lib/python3" not in primed, (
-        "pip writes usr/lib/python3.12, never bare usr/lib/python3; priming it fails"
-    )
-    assert "usr/lib/python3.12" in primed, "the real interpreter tree must be primed"
 
 
 def test_snapcraft_yaml_keeps_build_and_stage_packages_consistent() -> None:

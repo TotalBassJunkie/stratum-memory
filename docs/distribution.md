@@ -33,6 +33,7 @@ Produced on tag `v<version>` and attached to the GitHub Release:
 | `Stratum-<version>-setup.exe` | Windows | Inno Setup (windows runner) |
 | `Stratum-<version>-x86_64.pkg` | macOS | pkgbuild/productbuild (macos runner) |
 | `Stratum-<version>-x86_64.dmg` | macOS | hdiutil (macos runner) |
+| `stratum.exe` | Windows | PyInstaller (frozen CLI, shipped inside the MSI/EXE) |
 | `SHA256SUMS` | any | checksums for all of the above |
 
 The two Python distributions carry the PEP 503-normalised project name:

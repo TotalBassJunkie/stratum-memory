@@ -71,9 +71,11 @@ BUILD_SOURCES = (
 #: not the PyPI name's dash spelling - see ``python_distribution_names()``.
 CONTRACT_ASSETS = (
     "stratum_memory-<version>-py3-none-any.whl",
+    "stratum_memory-<version>.tar.gz",
     "stratum_<version>_amd64.deb",
     "stratum-<version>-1.x86_64.rpm",
     "Stratum-<version>-x86_64.AppImage",
+    "stratum_<version>_amd64.snap",
     "Stratum-<version>-x64.msi",
     "Stratum-<version>-setup.exe",
     "Stratum-<version>-x86_64.pkg",

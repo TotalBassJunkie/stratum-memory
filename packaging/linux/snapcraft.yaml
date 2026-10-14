@@ -14,9 +14,12 @@
 #
 # base: core24 (Ubuntu 24.04) is required, not cosmetic: pyproject.toml pins
 # `requires-python = ">=3.12"` while the older Ubuntu 22.04 base only carries
-# Python 3.10. With that base the `prime` list below would have to name a Python
-# 3.10 tree that does not exist and the wheel would never be importable inside
-# the snap. core24 ships Python 3.12, so `prime` names `usr/lib/python3.12`.
+# Python 3.10, so the wheel would never be importable inside the snap. core24
+# ships Python 3.12. There is deliberately NO `prime:` whitelist: Ubuntu's pip
+# installs into usr/lib/python3/dist-packages, and a hard-coded prime path
+# aborts the build ("Failed to copy .../stage/usr/lib/python3.12: no such file
+# or directory"). The app points the confined interpreter at dist-packages via
+# PYTHONPATH instead.
 name: stratum-memory
 base: core24
 version: "${VERSION}"

@@ -279,6 +279,22 @@ def test_snapcraft_yaml_uses_platforms_not_architectures() -> None:
     assert "amd64" in (amd64.get("build-for") or []), "the amd64 platform must build for amd64"
 
 
+def test_snapcraft_pip_install_ignores_preinstalled_deb_packages() -> None:
+    """The core24 build env ships Debian-managed wheels pip cannot uninstall.
+
+    A plain `pip install --prefix` aborts with "Cannot uninstall
+    typing_extensions 4.10.0, RECORD file not found. Hint: The package was
+    installed by debian", which cost the snap asset in the v0.1.0 run.
+    """
+    text = SNAPCRAFT_YAML.read_text(encoding="utf-8")
+    build = text.split("override-build:", 1)[1]
+    assert "pip install" in build, "the snap must install the built wheel"
+    assert "--ignore-installed" in build, (
+        "the core24 build env has debian-managed wheels pip cannot uninstall; "
+        "the install needs --ignore-installed"
+    )
+
+
 def test_snapcraft_yaml_keeps_build_and_stage_packages_consistent() -> None:
     """Both lists must exist and must not contradict the core24 choice."""
     config = _load_yaml(SNAPCRAFT_YAML)

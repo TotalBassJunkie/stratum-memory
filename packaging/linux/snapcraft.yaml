@@ -71,7 +71,12 @@ parts:
     override-build: |
       set -eu
       # Install the wheel built by the release workflow into the snap payload.
-      python3 -m pip install --no-cache-dir --prefix "$SNAPCRAFT_PART_INSTALL/usr" \
+      # `--ignore-installed` is required: the core24 build environment already
+      # carries Debian-managed packages (e.g. typing_extensions) whose RECORD
+      # files pip cannot find, so a plain install aborts with
+      # "Cannot uninstall typing_extensions 4.10.0, RECORD file not found".
+      python3 -m pip install --no-cache-dir --ignore-installed \
+          --prefix "$SNAPCRAFT_PART_INSTALL/usr" \
           "$SNAPCRAFT_PROJECT_DIR"/dist/stratum_memory-*-py3-none-any.whl
       # The CLI launcher, exactly as the .deb/.rpm install it.
       install -Dm0755 packaging/linux/stratum-launcher.sh "$SNAPCRAFT_PART_INSTALL/bin/stratum"

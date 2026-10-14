@@ -313,6 +313,22 @@ def test_snapcraft_build_anchors_helper_paths_at_the_project_dir() -> None:
     assert "install -Dm0644 packaging/linux/" not in build, "no relative helper path may remain"
 
 
+def test_snapcraft_primes_only_paths_the_build_actually_creates() -> None:
+    """`prime` entries must exist after override-build, or snapcraft aborts.
+
+    `usr/lib/python3` is not created by `pip install --prefix` (it writes
+    `usr/lib/python3.12/`), so priming it fails with "Failed to copy ...:
+    no such file or directory" and costs the snap asset.
+    """
+    config = _load_yaml(SNAPCRAFT_YAML)
+    parts = config.get("parts") or {}
+    primed = {entry for part in parts.values() for entry in (part.get("prime") or [])}
+    assert "usr/lib/python3" not in primed, (
+        "pip writes usr/lib/python3.12, never bare usr/lib/python3; priming it fails"
+    )
+    assert "usr/lib/python3.12" in primed, "the real interpreter tree must be primed"
+
+
 def test_snapcraft_yaml_keeps_build_and_stage_packages_consistent() -> None:
     """Both lists must exist and must not contradict the core24 choice."""
     config = _load_yaml(SNAPCRAFT_YAML)

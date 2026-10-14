@@ -88,6 +88,5 @@ parts:
           "$SNAPCRAFT_PART_INSTALL/usr/share/applications/stratum.desktop"
     prime:
       - bin/stratum
-      - usr/lib/python3
       - usr/lib/python3.12
       - usr/share/applications

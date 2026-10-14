@@ -279,6 +279,25 @@ def test_iss_updates_the_path_and_broadcasts_the_change() -> None:
     assert "NeedsAddPath" in ISS_TEXT
 
 
+def test_iss_check_function_has_a_parameterless_prototype() -> None:
+    """A `Check:` entry is called with no arguments.
+
+    Inno Setup rejects a parameterless call to a function declared with a
+    `Param: string` argument, aborting with "Invalid prototype for
+    'NeedsAddPath'" (line 152) at compile time. The declaration must therefore
+    take no parameters.
+    """
+    declared = [
+        line.strip()
+        for line in ISS_TEXT.splitlines()
+        if line.strip().startswith("function NeedsAddPath")
+    ]
+    assert len(declared) == 1, "NeedsAddPath must be declared exactly once"
+    assert declared[0] == "function NeedsAddPath(): Boolean;", (
+        "a `Check:` function takes no arguments; got: " + declared[0]
+    )
+
+
 def test_iss_path_entry_never_uses_uninsdeletevalue() -> None:
     """`uninsdeletevalue` on the PATH entry wipes the WHOLE user PATH.
 

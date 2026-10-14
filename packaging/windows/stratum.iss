@@ -149,7 +149,7 @@ Name: "{group}\Uninstall Stratum-Memory"; Filename: "{uninstallexe}"
 [Code]
 { True when the application directory is not already an entry of Path, so
   Setup does not add a duplicate on a reinstall or repair. }
-function NeedsAddPath(Param: string): Boolean;
+function NeedsAddPath(): Boolean;
 var
   Existing: string;
 begin

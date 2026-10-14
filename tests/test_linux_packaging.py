@@ -254,6 +254,31 @@ def test_snapcraft_yaml_primes_the_real_interpreter() -> None:
     )
 
 
+def test_snapcraft_yaml_uses_platforms_not_architectures() -> None:
+    """core24 rejects `architectures:` and needs the `platforms:` key.
+
+    snapcraft aborts with "architectures key is not supported for base 'core24';
+    use 'platforms' key instead", which silently cost the snap asset in the
+    first v0.1.0 release (the step is continue-on-error, so the release still
+    succeeded without the snap).
+    """
+    text = SNAPCRAFT_YAML.read_text(encoding="utf-8")
+    config = _load_yaml(SNAPCRAFT_YAML)
+    assert "architectures" not in config, (
+        "core24 does not accept the legacy `architectures:` key; use `platforms:`"
+    )
+    # Only flag a *top-level key*, not the explanatory comment that names the
+    # rejected value (the comment is the reason the key is absent).
+    assert not re.search(r"^architectures\s*:", text, flags=re.MULTILINE), (
+        "no architectures block may remain in the YAML"
+    )
+    platforms = config.get("platforms") or {}
+    assert "amd64" in platforms, "the amd64 platform must be declared for the contract snap"
+    amd64 = platforms["amd64"]
+    assert "amd64" in (amd64.get("build-on") or []), "the amd64 platform must build on amd64"
+    assert "amd64" in (amd64.get("build-for") or []), "the amd64 platform must build for amd64"
+
+
 def test_snapcraft_yaml_keeps_build_and_stage_packages_consistent() -> None:
     """Both lists must exist and must not contradict the core24 choice."""
     config = _load_yaml(SNAPCRAFT_YAML)

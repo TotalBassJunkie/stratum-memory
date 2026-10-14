@@ -36,9 +36,13 @@ license: Apache-2.0
 contact: https://github.com/TotalBassJunkie/stratum-memory
 issues: https://github.com/TotalBassJunkie/stratum-memory/issues
 website: https://github.com/TotalBassJunkie/stratum-memory
-architectures:
-  - build-on: amd64
-    build-for: amd64
+# core24 rejects the legacy `architectures:` key ("architectures key is not
+# supported for base 'core24'; use 'platforms' key instead"). A single amd64
+# platform is enough: the contract only ships an amd64 snap.
+platforms:
+  amd64:
+    build-on: [amd64]
+    build-for: [amd64]
 
 apps:
   stratum:

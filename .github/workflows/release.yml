@@ -272,7 +272,7 @@ jobs:
         run: |
           mkdir -p dist
           sed "s/\${VERSION}/${VERSION}/" packaging/linux/snapcraft.yaml > snapcraft.yaml
-          snapcraft --destructive-mode
+          snapcraft pack --destructive-mode
           mv "stratum-memory_${VERSION}_amd64.snap" "dist/stratum_${VERSION}_amd64.snap"
 
       - name: Upload the Snap

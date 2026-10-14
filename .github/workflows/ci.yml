@@ -48,7 +48,7 @@ jobs:
         run: python -m pip install --upgrade ruff
 
       - name: Lint
-        run: python -m ruff check src tests
+        run: python -m ruff check src tests .github
 
   tests:
     name: pytest (not integration)
